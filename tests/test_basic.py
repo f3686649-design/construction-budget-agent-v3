@@ -27,6 +27,23 @@ def _model_with_market_gap() -> dict:
     )
 
 
+def _technology_model(**kwargs) -> dict:
+    base = {
+        "project_name": "Технология 6666",
+        "total_area": 6_666,
+        "sellable_area": 5_200,
+        "foundation_type": "сваи",
+        "has_underground_part": False,
+        "sellable_finish_level": "черновая",
+    }
+    base.update(kwargs)
+    return build_financial_model(ProjectInput(**base))
+
+
+def _detail_item(model: dict, name: str) -> dict:
+    return next(row for row in model["detailed_budget"]["items"] if row["Статья"] == name)
+
+
 def test_health_works() -> None:
     assert health() == {"status": "ok"}
 
@@ -533,3 +550,47 @@ def test_excel_contains_supply_plan_sheet() -> None:
         if workbook is not None:
             workbook.close()
         path.unlink(missing_ok=True)
+
+
+def test_design_cost_for_6666_m2_is_about_10_million() -> None:
+    model = _technology_model()
+    design = _detail_item(model, "Проектирование")
+    assert design["Сумма"] == pytest.approx(9_999_000, abs=1)
+    assert model["budget"]["design"] == pytest.approx(9_999_000, abs=1)
+
+
+def test_preparation_cost_for_6666_m2_is_about_5_million() -> None:
+    model = _technology_model()
+    preparation = _detail_item(model, "Подготовительный период")
+    assert preparation["Сумма"] == pytest.approx(4_999_500, abs=1)
+
+
+def test_pile_foundation_without_underground_part_zeroes_underground_part() -> None:
+    model = _technology_model()
+    underground = _detail_item(model, "Устройство несущих конструкций подземной части")
+    assert underground["Сумма"] == 0
+    assert "подземная часть отсутствует" in underground["Примечание"].lower()
+
+
+def test_pile_earthworks_are_lower_than_underground_earthworks() -> None:
+    pile_model = _technology_model(foundation_type="сваи", has_underground_part=False)
+    underground_model = _technology_model(foundation_type="подземная часть", has_underground_part=True)
+    pile_earthworks = _detail_item(pile_model, "Земляные работы")
+    underground_earthworks = _detail_item(underground_model, "Земляные работы")
+    assert pile_earthworks["Сумма"] < underground_earthworks["Сумма"]
+    assert pile_earthworks["Ставка"] == pytest.approx(800)
+
+
+def test_rough_finish_is_cheaper_than_white_box_and_finished() -> None:
+    rough = _technology_model(sellable_finish_level="черновая")
+    white_box = _technology_model(sellable_finish_level="white box")
+    finished = _technology_model(sellable_finish_level="чистовая")
+    rough_amount = _detail_item(rough, "Отделка реализуемых площадей")["Сумма"]
+    white_box_amount = _detail_item(white_box, "Отделка реализуемых площадей")["Сумма"]
+    finished_amount = _detail_item(finished, "Отделка реализуемых площадей")["Сумма"]
+    assert rough_amount < white_box_amount < finished_amount
+
+
+def test_detailed_budget_total_still_matches_budget_after_technology_adjustments() -> None:
+    model = _technology_model()
+    assert model["detailed_budget"]["total_budget"] == pytest.approx(model["budget"]["total_budget"], abs=0.05)

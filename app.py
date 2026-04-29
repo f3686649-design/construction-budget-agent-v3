@@ -52,6 +52,11 @@ with st.form("model_form"):
         credit_rate = st.number_input("Ставка кредита", min_value=0.0, value=0.0, step=0.01)
         external_networks_included = st.selectbox("Наружные сети включены?", ["нет", "да"]) == "да"
         gas_only_cooking = st.selectbox("Газ только пищеприготовление?", ["да", "нет"]) == "да"
+        foundation_type = st.selectbox("Тип фундамента", ["сваи", "плита", "лента", "подземная часть"])
+        has_underground_part = st.selectbox("Есть подземная часть?", ["нет", "да"]) == "да"
+        sellable_finish_level = st.selectbox("Отделка реализуемых помещений", ["черновая", "без отделки", "white box", "чистовая"])
+        design_cost_override = st.number_input("Проектирование, ₽ — можно оставить пустым", min_value=0.0, value=0.0, step=1_000_000.0)
+        preparation_cost_override = st.number_input("Подготовительные работы, ₽ — можно оставить пустым", min_value=0.0, value=0.0, step=1_000_000.0)
         budget_format = st.selectbox("Формат бюджета", ["Укрупнённый", "Детальный по статьям"])
 
     submitted = st.form_submit_button("Сформировать финансовую модель")
@@ -76,6 +81,11 @@ if submitted:
         credit_rate=_optional_number(credit_rate),
         external_networks_included=external_networks_included,
         gas_only_cooking=gas_only_cooking,
+        foundation_type=foundation_type,
+        has_underground_part=has_underground_part,
+        sellable_finish_level=sellable_finish_level,
+        design_cost_override=_optional_number(design_cost_override),
+        preparation_cost_override=_optional_number(preparation_cost_override),
     )
     model = build_financial_model(project_input)
     excel_path = export_model_to_excel(model, OUTPUT_DIR)
@@ -176,6 +186,8 @@ if submitted:
 
     st.subheader("Бюджет проекта")
     if budget_format == "Детальный по статьям":
+        st.write("**Ключевые корректировки бюджета**")
+        st.dataframe(model["detailed_budget"]["budget_adjustments"], use_container_width=True)
         chapter_rows = [
             {"Глава": row["Глава"], "Статья": row["Статья"], "Сумма": row["Сумма"]}
             for row in model["detailed_budget"]["chapter_totals"]

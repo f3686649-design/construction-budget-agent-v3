@@ -7,6 +7,7 @@ Construction Budget Agent v3 generates a developer financial model from core pro
 - Project assumptions and TEP
 - Budget: land, CMR, design, technical customer, general contractor, networks, landscaping, reserve
 - Detailed ModDEV-style budget by chapters, articles, materials, works, machinery, and overheads
+- Technology-aware budget adjustments for foundation type, underground part, finish level, design cost, and site preparation
 - CMR split: materials, works, machinery, overheads, reserve
 - Developer-ready construction GPR with stage schedule, monthly CAPEX, cumulative CAPEX, and readiness
 - Supply plan for concrete, rebar, facade materials, and engineering equipment

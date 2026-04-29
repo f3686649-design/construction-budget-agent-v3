@@ -26,6 +26,11 @@ class ProjectInput(BaseModel):
     credit_rate: float | None = Field(default=None, ge=0)
     external_networks_included: bool | None = None
     gas_only_cooking: bool | None = None
+    foundation_type: str | None = Field(default=None)
+    has_underground_part: bool | None = None
+    sellable_finish_level: str | None = Field(default=None)
+    design_cost_override: float | None = Field(default=None, ge=0)
+    preparation_cost_override: float | None = Field(default=None, ge=0)
 
     @field_validator("credit_share", "credit_rate")
     @classmethod

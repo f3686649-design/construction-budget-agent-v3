@@ -26,7 +26,7 @@ def generate_budget(data: dict[str, Any]) -> dict[str, Any]:
         cmr_source = "Расчётная себестоимость агента"
     cmr = total_area * construction_price
 
-    design = cmr * float(data["design"])
+    design = float(data.get("design_cost_amount") or cmr * float(data["design"]))
     technical_customer = cmr * float(data["technical_customer"])
     general_contractor = cmr * float(data["general_contractor"])
     external_networks = cmr * float(data["external_networks"]) if data["external_networks_included"] else 0.0
@@ -57,7 +57,16 @@ def generate_budget(data: dict[str, Any]) -> dict[str, Any]:
             ),
             "source": cmr_source,
         },
-        {"name": "Проектирование", "amount": round_money(design), "formula": "СМР × 4%", "source": "Норматив модели"},
+        {
+            "name": "Проектирование",
+            "amount": round_money(design),
+            "formula": (
+                "Ручная сумма проектирования"
+                if float(data.get("design_cost_override") or 0) > 0
+                else "Общая площадь × 1 500 ₽/м², с ограничением до 10 млн ₽ для объектов до 10 000 м²"
+            ),
+            "source": "Ввод пользователя" if float(data.get("design_cost_override") or 0) > 0 else "Норматив модели",
+        },
         {"name": "Технический заказчик", "amount": round_money(technical_customer), "formula": "СМР × 2.5%", "source": "Норматив модели"},
         {"name": "Генподряд", "amount": round_money(general_contractor), "formula": "СМР × 3%", "source": "Норматив модели"},
         {"name": "Наружные сети", "amount": round_money(external_networks), "formula": "СМР × 7% или 0", "source": "Норматив модели"},

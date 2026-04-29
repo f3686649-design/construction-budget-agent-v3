@@ -30,11 +30,11 @@ def generate_detailed_budget(data: dict[str, Any], budget: dict[str, Any], econo
 
     for source, entries in grouped.items():
         total = bucket_totals.get(source, 0.0)
-        amounts = _allocate(total, [float(entry.get("доля источника") or 0) for entry in entries])
+        amounts = _amounts_for_source(source, entries, total, data)
         remaining_by_source[source] = total
         for entry, amount in zip(entries, amounts, strict=True):
             remaining_by_source[source] -= amount
-            row = _build_row(entry, amount, data, budget, economics)
+            row = _build_row(_effective_entry(entry, data), amount, data, budget, economics)
             items.append(row)
 
     items.sort(key=lambda row: _sort_code(str(row["Код"])))
@@ -52,10 +52,12 @@ def generate_detailed_budget(data: dict[str, Any], budget: dict[str, Any], econo
         "machinery": round_money(sum(row["Механизмы, ₽"] for row in items)),
         "overheads": round_money(sum(row["Накладные, ₽"] for row in items)),
     }
+    budget_adjustments = _budget_adjustments(items)
     return {
         "items": items,
         "chapter_totals": chapter_totals,
         "split_totals": split_totals,
+        "budget_adjustments": budget_adjustments,
         "total_budget": total_budget,
         "trace": [
             {
@@ -66,6 +68,7 @@ def generate_detailed_budget(data: dict[str, Any], budget: dict[str, Any], econo
                     "total_budget": total_budget,
                     "chapter_totals": chapter_totals,
                     "split_totals": split_totals,
+                    "budget_adjustments": budget_adjustments,
                     "drift": drift,
                 },
             }
@@ -84,7 +87,16 @@ def generate_work_schedule(
     stages_config = [
         ("Подготовительный период", 0.01, 0.10, _sum_items(item_amounts, "Подготовительный период")),
         ("Земляные работы", 0.08, 0.10, _sum_items(item_amounts, "Земляные работы")),
-        ("Фундамент / сваи / котлован", 0.12, 0.15, _sum_items(item_amounts, "Фундаментная плита / свайное основание / ограждение котлована")),
+        (
+            "Фундамент / сваи / котлован",
+            0.12,
+            0.15,
+            _sum_items(
+                item_amounts,
+                "Фундаментная плита / свайное основание / ограждение котлована",
+                "Свайное основание / ростверк",
+            ),
+        ),
         ("Подземная часть", 0.18, 0.15, _sum_items(item_amounts, "Устройство несущих конструкций подземной части")),
         ("Надземная часть", 0.25, 0.45, _sum_items(item_amounts, "Устройство несущих конструкций надземной части")),
         (
@@ -276,6 +288,99 @@ def _allocate(total: float, shares: list[float]) -> list[float]:
     return allocated
 
 
+def _amounts_for_source(source: str, entries: list[dict[str, Any]], total: float, data: dict[str, Any]) -> list[float]:
+    if source != "cmr":
+        return _allocate(total, [float(entry.get("доля источника") or 0) for entry in entries])
+
+    fixed: dict[str, float] = {
+        "2.1": _preparation_amount(data),
+        "2.2": _earthworks_amount(data),
+        "2.3": _foundation_amount(data),
+        "2.8": _sellable_finish_amount(data),
+    }
+    if not bool(data.get("has_underground_part")):
+        fixed["2.4"] = 0.0
+    fixed_total = sum(fixed.values())
+    if fixed_total > total and fixed_total > 0:
+        scale = total / fixed_total
+        fixed = {code: round_money(amount * scale) for code, amount in fixed.items()}
+        fixed_total = sum(fixed.values())
+
+    variable_entries = [entry for entry in entries if str(entry["код"]) not in fixed]
+    remaining = max(0.0, total - fixed_total)
+    variable_amounts = _allocate(remaining, [float(entry.get("доля источника") or 0) for entry in variable_entries])
+    variable_by_code = {str(entry["код"]): amount for entry, amount in zip(variable_entries, variable_amounts, strict=True)}
+    amounts = [round_money(fixed.get(str(entry["код"]), variable_by_code.get(str(entry["код"]), 0.0))) for entry in entries]
+    drift = round_money(total - sum(amounts))
+    if amounts and abs(drift) >= 0.01:
+        adjustable_index = next((index for index, entry in reversed(list(enumerate(entries))) if str(entry["код"]) != "2.4"), len(amounts) - 1)
+        amounts[adjustable_index] = round_money(amounts[adjustable_index] + drift)
+    return amounts
+
+
+def _effective_entry(entry: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+    effective = dict(entry)
+    code = str(entry["код"])
+    foundation_type = _normalize(data.get("foundation_type"))
+    has_underground = bool(data.get("has_underground_part"))
+    finish_level = _normalize(data.get("sellable_finish_level"))
+    if code == "2.2" and foundation_type == "сваи" and not has_underground:
+        effective["примечание"] = "Сниженный объём земляных работ: свайный фундамент, подземная часть отсутствует."
+        effective["ставка"] = 800
+    if code == "2.3" and foundation_type == "сваи":
+        effective["статья"] = "Свайное основание / ростверк"
+        effective["примечание"] = "Свайный фундамент рассчитан отдельной статьёй, без смешения со стоимостью подземной части."
+    if code == "2.4" and not has_underground:
+        effective["примечание"] = "Не предусмотрено: подземная часть отсутствует."
+    if code == "2.8":
+        effective["ставка"] = _finish_rate(finish_level)
+        effective["примечание"] = f"Отделка реализуемых помещений: {data.get('sellable_finish_level') or 'черновая'}."
+    return effective
+
+
+def _preparation_amount(data: dict[str, Any]) -> float:
+    override = float(data.get("preparation_cost_override") or 0)
+    if override > 0:
+        return round_money(override)
+    return round_money(float(data.get("total_area") or 0) * 750)
+
+
+def _earthworks_amount(data: dict[str, Any]) -> float:
+    total_area = float(data.get("total_area") or 0)
+    if _normalize(data.get("foundation_type")) == "сваи" and not bool(data.get("has_underground_part")):
+        return round_money(total_area * 800)
+    if bool(data.get("has_underground_part")):
+        return round_money(total_area * 3_000)
+    return round_money(total_area * 1_800)
+
+
+def _foundation_amount(data: dict[str, Any]) -> float:
+    total_area = float(data.get("total_area") or 0)
+    foundation_type = _normalize(data.get("foundation_type"))
+    rates = {
+        "сваи": 9_000,
+        "плита": 8_500,
+        "лента": 5_000,
+        "подземнаячасть": 12_000,
+    }
+    return round_money(total_area * rates.get(foundation_type, 9_000))
+
+
+def _sellable_finish_amount(data: dict[str, Any]) -> float:
+    sellable_area = float(data.get("sellable_area") or 0)
+    return round_money(sellable_area * _finish_rate(_normalize(data.get("sellable_finish_level"))))
+
+
+def _finish_rate(finish_level: str) -> float:
+    rates = {
+        "безотделки": 0,
+        "черновая": 2_500,
+        "whitebox": 10_000,
+        "чистовая": 22_000,
+    }
+    return float(rates.get(finish_level, 2_500))
+
+
 def _build_row(
     entry: dict[str, Any],
     amount: float,
@@ -347,12 +452,44 @@ def _chapter_totals(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return totals
 
 
+def _budget_adjustments(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    item_by_name = {row["Статья"]: row for row in items}
+
+    def pick(*names: str) -> dict[str, Any]:
+        for name in names:
+            if name in item_by_name:
+                return item_by_name[name]
+        return {"Статья": names[0], "Сумма": 0, "Ставка": 0, "Примечание": ""}
+
+    rows = [
+        pick("Проектирование"),
+        pick("Подготовительный период"),
+        pick("Земляные работы"),
+        pick("Устройство несущих конструкций подземной части"),
+        pick("Отделка реализуемых площадей"),
+        pick("Свайное основание / ростверк", "Фундаментная плита / свайное основание / ограждение котлована"),
+    ]
+    return [
+        {
+            "Статья": row["Статья"],
+            "Сумма": row["Сумма"],
+            "Ставка": row["Ставка"],
+            "Комментарий": row["Примечание"],
+        }
+        for row in rows
+    ]
+
+
 def _sort_code(code: str) -> tuple[int, ...]:
     return tuple(int(part) for part in code.split(".") if part.isdigit())
 
 
 def _sum_items(item_amounts: dict[str, float], *names: str) -> float:
     return sum(item_amounts.get(name, 0.0) for name in names)
+
+
+def _normalize(value: Any) -> str:
+    return str(value or "").lower().replace("ё", "е").replace(" ", "").replace("-", "")
 
 
 def _stage_timing(months: int, start_fraction: float, duration_fraction: float) -> tuple[int, int, int]:
@@ -384,4 +521,3 @@ def _add_months(value: date, months: int) -> date:
     month = month_index % 12 + 1
     day = min(value.day, 28)
     return date(year, month, day)
-
