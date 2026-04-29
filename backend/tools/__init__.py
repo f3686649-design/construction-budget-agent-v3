@@ -1,0 +1,1 @@
+"""Financial model generation tools."""

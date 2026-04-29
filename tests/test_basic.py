@@ -1,0 +1,347 @@
+from __future__ import annotations
+
+import pytest
+from openpyxl import load_workbook
+
+from backend.main import OUTPUT_DIR, build_financial_model, generate_model, health
+from backend.models import ProjectInput
+from backend.tools.cmr_splitter import split_cmr
+from backend.tools.excel_exporter import export_model_to_excel
+
+
+def _minimal_model() -> dict:
+    return build_financial_model(ProjectInput(project_name="Минимальный проект"))
+
+
+def test_health_works() -> None:
+    assert health() == {"status": "ok"}
+
+
+def test_model_is_created_from_minimal_data() -> None:
+    payload = generate_model(ProjectInput(project_name="Минимальный проект"))
+    assert payload["status"] == "ok"
+    assert payload["budget"]["total_budget"] > 0
+    assert payload["economics"]["revenue"] > 0
+    assert payload["estimated_cmr_cost_per_m2"] > 0
+    assert payload["cmr_cost_source"] == "Расчётная себестоимость агента"
+    assert payload["recommended_price_per_m2"] > 0
+    assert payload["sale_price_source"] == "Расчётная цена продажи агента"
+    assert payload["assumptions"]
+
+
+def test_excel_is_saved() -> None:
+    before = set(OUTPUT_DIR.glob("*.xlsx")) if OUTPUT_DIR.exists() else set()
+    payload = generate_model(ProjectInput(project_name="Excel test"))
+    filename = payload["output_filename"]
+    output_path = OUTPUT_DIR / filename
+    try:
+        assert output_path.exists()
+        assert output_path.suffix == ".xlsx"
+    finally:
+        for path in set(OUTPUT_DIR.glob("*.xlsx")) - before:
+            path.unlink(missing_ok=True)
+
+
+def test_gpr_sum_equals_budget() -> None:
+    model = _minimal_model()
+    gpr_sum = sum(row["amount"] for row in model["gpr"])
+    assert gpr_sum == pytest.approx(model["budget"]["total_budget"], abs=0.05)
+
+
+def test_sales_sum_equals_sellable_area() -> None:
+    model = _minimal_model()
+    sold_area = sum(row["sold_area"] for row in model["sales_plan"])
+    assert sold_area == pytest.approx(model["input"]["sellable_area"], abs=0.001)
+
+
+def test_cmr_split_sum_is_correct() -> None:
+    cmr = split_cmr(100_000_000)
+    assert sum(item["amount"] for item in cmr["items"]) == pytest.approx(100_000_000, abs=0.01)
+    assert cmr["items"][0]["amount"] == pytest.approx(55_000_000)
+
+
+def test_minimum_dscr_ignores_empty_first_month() -> None:
+    model = _minimal_model()
+    first_month = model["dscr"]["schedule"][0]
+    assert first_month["sales_receipts"] == 0
+    assert first_month["dscr"] is None
+    assert model["dscr"]["minimum_dscr_after_sales_start"] is None or model["dscr"]["minimum_dscr_after_sales_start"] > 0
+
+
+def test_sellable_ratio_is_calculated() -> None:
+    model = build_financial_model(
+        ProjectInput(
+            project_name="Sellable ratio",
+            total_area=10_000,
+            sellable_area=7_000,
+        )
+    )
+    assert model["tep"]["sellable_ratio"] == pytest.approx(0.7)
+    assert model["economics"]["sellable_ratio"] == pytest.approx(0.7)
+
+
+def test_equity_required_when_credit_is_less_than_full_deficit() -> None:
+    model = build_financial_model(
+        ProjectInput(
+            project_name="Equity gap",
+            total_area=10_000,
+            sellable_area=7_800,
+            credit_share=0.7,
+        )
+    )
+    assert max(row["equity_required"] for row in model["cashflow"]) > 0
+    assert model["economics"]["total_equity_required"] > 0
+
+
+def test_scenarios_are_generated() -> None:
+    model = _minimal_model()
+    scenarios = {row["scenario"]: row for row in model["scenarios"]}
+    assert set(scenarios) == {"base", "optimistic", "stress"}
+    assert scenarios["optimistic"]["revenue"] > scenarios["base"]["revenue"]
+    assert scenarios["stress"]["revenue"] < scenarios["base"]["revenue"]
+    assert scenarios["stress"]["construction_cost_per_m2"] > scenarios["base"]["construction_cost_per_m2"]
+    assert scenarios["stress"]["credit_rate"] == pytest.approx(model["input"]["credit_rate"] + 0.02)
+    assert scenarios["stress"]["margin_assessment"] in {"плохо", "средне", "хорошо"}
+    assert scenarios["stress"]["dscr_assessment"] in {"риск", "норма", "нет данных"}
+
+
+def test_excel_contains_scenarios_sheet() -> None:
+    model = _minimal_model()
+    path = export_model_to_excel(model, OUTPUT_DIR)
+    workbook = None
+    try:
+        workbook = load_workbook(path, read_only=True)
+        assert "13_Сценарии" in workbook.sheetnames
+        sheet = workbook["13_Сценарии"]
+        headers = [cell.value for cell in next(sheet.iter_rows(min_row=1, max_row=1))]
+        assert headers == [
+            "Код сценария",
+            "Сценарий",
+            "Цена продажи за м²",
+            "Срок продаж, мес.",
+            "Цена генподряда за м²",
+            "Стоимость строительства за м²",
+            "Ставка кредита",
+            "Выручка",
+            "Итоговый бюджет",
+            "Прибыль до процентов",
+            "Прибыль после процентов",
+            "Маржа после процентов",
+            "Максимальный кредит",
+            "Собственные средства",
+            "Minimum DSCR",
+            "Месяцев DSCR ниже 1.2",
+            "Оценка маржи",
+            "Оценка DSCR",
+        ]
+        assert sheet.max_row == 4
+    finally:
+        if workbook is not None:
+            workbook.close()
+        path.unlink(missing_ok=True)
+
+
+def test_excel_uses_russian_user_headers() -> None:
+    model = _minimal_model()
+    path = export_model_to_excel(model, OUTPUT_DIR)
+    workbook = None
+    try:
+        workbook = load_workbook(path, read_only=True)
+        tep_labels = [row[0].value for row in workbook["03_ТЭП"].iter_rows(min_row=2, max_col=1)]
+        assumptions_labels = [row[0].value for row in workbook["02_Допущения"].iter_rows(min_row=2, max_col=1)]
+        economics_labels = [row[0].value for row in workbook["11_Экономика"].iter_rows(min_row=2, max_col=1)]
+        cashflow_headers = [cell.value for cell in next(workbook["09_ДДС"].iter_rows(min_row=1, max_row=1))]
+        risks_headers = [cell.value for cell in next(workbook["12_Риски"].iter_rows(min_row=1, max_row=1))]
+        assert "Название проекта" in tep_labels
+        assert "Доля продаваемой площади" in tep_labels
+        assert "Расчётная себестоимость СМР за м²" in tep_labels
+        assert "Расчётная цена продажи за м²" in tep_labels
+        assert "Рыночный ориентир" in tep_labels
+        assert "Бюджет на 1 м² общей площади" in tep_labels
+        assert "Базовая стоимость СМР за м²" in assumptions_labels
+        assert "Коэффициент города" in assumptions_labels
+        assert "Базовая рыночная цена за м²" in assumptions_labels
+        assert "Коэффициент типа объекта" in assumptions_labels
+        assert "Прибыль после процентов" in economics_labels
+        assert "Источник цены продажи" in economics_labels
+        assert "Цена безубыточности" in economics_labels
+        assert "Собственные средства" in cashflow_headers
+        assert "Риск" in risks_headers
+    finally:
+        if workbook is not None:
+            workbook.close()
+        path.unlink(missing_ok=True)
+
+
+def test_model_estimates_cost_without_manual_cmr_price() -> None:
+    model = build_financial_model(
+        ProjectInput(
+            project_name="Автооценка",
+            city="Москва",
+            object_type="Жилой дом",
+            object_class="комфорт",
+            total_area=10_000,
+            sellable_area=7_800,
+            floors=10,
+        )
+    )
+    assert model["input"]["construction_cost_per_m2"] is None
+    assert model["input"]["gp_contract_price_per_m2"] is None
+    assert model["estimated_cmr_cost_per_m2"] > 0
+    assert model["cmr_cost_source"] == "Расчётная себестоимость агента"
+    assert model["budget"]["construction_price_per_m2"] == model["estimated_cmr_cost_per_m2"]
+
+
+def test_gp_contract_price_has_priority_over_estimated_cost() -> None:
+    model = build_financial_model(
+        ProjectInput(
+            project_name="Ручной генподряд",
+            city="Москва",
+            total_area=10_000,
+            sellable_area=7_800,
+            gp_contract_price_per_m2=123_000,
+        )
+    )
+    assert model["cmr_cost_source"] == "Ручная цена генподряда"
+    assert model["budget"]["construction_price_per_m2"] == 123_000
+    assert model["budget"]["cmr"] == pytest.approx(1_230_000_000)
+
+
+def test_yakutsk_city_coefficient_is_applied() -> None:
+    model = build_financial_model(
+        ProjectInput(
+            project_name="Якутск",
+            city="Якутск",
+            object_type="Жилой дом",
+            object_class="комфорт",
+            total_area=10_000,
+            sellable_area=7_800,
+            floors=9,
+        )
+    )
+    assert model["cost_estimation_coefficients"]["city_coefficient"] == pytest.approx(1.12)
+
+
+def test_model_estimates_sale_price_without_manual_price() -> None:
+    model = build_financial_model(
+        ProjectInput(
+            project_name="Автоцена",
+            city="Якутск",
+            object_type="Жилой дом",
+            object_class="комфорт",
+            total_area=10_000,
+            sellable_area=7_800,
+            floors=9,
+        )
+    )
+    assert model["input"]["sale_price_per_m2"] == model["recommended_price_per_m2"]
+    assert model["sale_price_source"] == "Расчётная цена продажи агента"
+    assert model["recommended_price_per_m2"] > 0
+
+
+def test_manual_sale_price_has_priority() -> None:
+    model = build_financial_model(
+        ProjectInput(
+            project_name="Ручная цена",
+            city="Якутск",
+            total_area=10_000,
+            sellable_area=7_800,
+            sale_price_per_m2=210_000,
+        )
+    )
+    assert model["sale_price_source"] == "Ручная цена продажи"
+    assert model["input"]["sale_price_per_m2"] == 210_000
+    assert model["economics"]["revenue"] == pytest.approx(7_800 * 210_000)
+
+
+def test_yakutsk_comfort_market_price_starts_from_180000() -> None:
+    model = build_financial_model(
+        ProjectInput(
+            project_name="Рынок Якутск",
+            city="Якутск",
+            object_type="Жилой дом",
+            object_class="комфорт",
+            total_area=10_000,
+            sellable_area=7_800,
+            floors=9,
+        )
+    )
+    assert model["price_estimation_components"]["base_market_price_per_m2"] == 180_000
+    assert model["market_price_per_m2"] == pytest.approx(180_000)
+
+
+def test_price_warning_when_target_margin_price_is_above_market() -> None:
+    model = build_financial_model(
+        ProjectInput(
+            project_name="Дорогой бюджет",
+            city="Новосибирск",
+            object_type="Жилой дом",
+            object_class="эконом",
+            total_area=10_000,
+            sellable_area=7_000,
+            gp_contract_price_per_m2=250_000,
+        )
+    )
+    assert model["target_margin_price_per_m2"] > model["market_price_per_m2"]
+    assert model["price_estimation_warnings"]
+
+
+def test_optimization_advisor_creates_recommendations() -> None:
+    model = build_financial_model(
+        ProjectInput(
+            project_name="Оптимизация",
+            city="Якутск",
+            object_type="Жилой дом",
+            object_class="комфорт",
+            total_area=10_000,
+            sellable_area=7_800,
+            floors=9,
+        )
+    )
+    optimization = model["optimization"]
+    assert optimization["recommendations"]
+    assert optimization["required_budget_reduction_for_market_price"] >= 0
+    assert optimization["required_cmr_cost_per_m2_for_market_price"] >= 0
+
+
+def test_optimization_gap_when_recommended_price_is_above_market() -> None:
+    model = build_financial_model(
+        ProjectInput(
+            project_name="Разрыв к рынку",
+            city="Якутск",
+            object_type="Жилой дом",
+            object_class="комфорт",
+            total_area=10_000,
+            sellable_area=7_800,
+            floors=9,
+        )
+    )
+    assert model["recommended_price_per_m2"] > model["market_price_per_m2"]
+    assert model["optimization"]["gap_to_market_price"] == pytest.approx(
+        model["recommended_price_per_m2"] - model["market_price_per_m2"]
+    )
+
+
+def test_excel_displays_english_object_class_in_russian() -> None:
+    model = build_financial_model(
+        ProjectInput(
+            project_name="Класс comfort",
+            city="Якутск",
+            object_type="Жилой дом",
+            object_class="comfort",
+            total_area=10_000,
+            sellable_area=7_800,
+            floors=9,
+        )
+    )
+    path = export_model_to_excel(model, OUTPUT_DIR)
+    workbook = None
+    try:
+        workbook = load_workbook(path, read_only=True)
+        assert "14_Оптимизация" in workbook.sheetnames
+        rows = {row[0]: row[1] for row in workbook["03_ТЭП"].iter_rows(min_row=2, values_only=True)}
+        assert rows["Класс объекта"] == "комфорт"
+    finally:
+        if workbook is not None:
+            workbook.close()
+        path.unlink(missing_ok=True)

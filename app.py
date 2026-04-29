@@ -1,0 +1,192 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import streamlit as st
+
+from backend.main import OUTPUT_DIR, build_financial_model
+from backend.models import ProjectInput
+from backend.tools.excel_exporter import export_model_to_excel
+
+
+st.set_page_config(page_title="Агент строительного бюджета v3", layout="wide")
+st.title("Агент строительного бюджета v3")
+st.caption("Генератор девелоперской финансовой модели с бюджетом, ГПР, продажами, кредитом, ДДС и рисками.")
+
+
+def _optional_number(value: float) -> float | None:
+    return None if value == 0 else value
+
+
+with st.form("model_form"):
+    left, right = st.columns(2)
+    with left:
+        project_name = st.text_input("Название проекта", value="")
+        city = st.text_input("Город", value="")
+        object_type = st.text_input("Тип объекта", value="Жилой комплекс")
+        object_class = st.text_input("Класс объекта", value="комфорт")
+        land_area = st.number_input("Площадь участка", min_value=0.0, value=0.0, step=100.0)
+        land_cost = st.number_input("Стоимость земли", min_value=0.0, value=0.0, step=1_000_000.0)
+        total_area = st.number_input("Общая площадь", min_value=0.0, value=0.0, step=100.0)
+        sellable_area = st.number_input("Продаваемая площадь", min_value=0.0, value=0.0, step=100.0)
+        floors = st.number_input("Этажность", min_value=0, value=0, step=1)
+    with right:
+        sale_price_per_m2 = st.number_input("Цена продажи за м² (необязательно)", min_value=0.0, value=0.0, step=10_000.0)
+        st.caption("Можно оставить пустым — агент предложит цену продажи сам.")
+        construction_cost_per_m2 = st.number_input(
+            "Стоимость строительства за м² (необязательно)",
+            min_value=0.0,
+            value=0.0,
+            step=10_000.0,
+        )
+        gp_contract_price_per_m2 = st.number_input(
+            "Цена генподряда за м² (необязательно)",
+            min_value=0.0,
+            value=0.0,
+            step=10_000.0,
+        )
+        st.caption("Можно оставить пустым — агент рассчитает себестоимость сам.")
+        construction_months = st.number_input("Срок строительства", min_value=0, value=0, step=1)
+        sales_months = st.number_input("Срок продаж", min_value=0, value=0, step=1)
+        credit_share = st.number_input("Доля кредита", min_value=0.0, value=0.0, step=0.05)
+        credit_rate = st.number_input("Ставка кредита", min_value=0.0, value=0.0, step=0.01)
+        external_networks_included = st.selectbox("Наружные сети включены?", ["нет", "да"]) == "да"
+        gas_only_cooking = st.selectbox("Газ только пищеприготовление?", ["да", "нет"]) == "да"
+
+    submitted = st.form_submit_button("Сформировать финансовую модель")
+
+if submitted:
+    project_input = ProjectInput(
+        project_name=project_name or None,
+        city=city or None,
+        object_type=object_type or None,
+        object_class=object_class or None,
+        land_area=_optional_number(land_area),
+        land_cost=land_cost,
+        total_area=_optional_number(total_area),
+        sellable_area=_optional_number(sellable_area),
+        floors=int(floors) if floors else None,
+        sale_price_per_m2=_optional_number(sale_price_per_m2),
+        construction_cost_per_m2=_optional_number(construction_cost_per_m2),
+        gp_contract_price_per_m2=_optional_number(gp_contract_price_per_m2),
+        construction_months=int(construction_months) if construction_months else None,
+        sales_months=int(sales_months) if sales_months else None,
+        credit_share=_optional_number(credit_share),
+        credit_rate=_optional_number(credit_rate),
+        external_networks_included=external_networks_included,
+        gas_only_cooking=gas_only_cooking,
+    )
+    model = build_financial_model(project_input)
+    excel_path = export_model_to_excel(model, OUTPUT_DIR)
+
+    budget = model["budget"]
+    economics = model["economics"]
+    credit = model["credit"]
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Итоговый бюджет", f"{budget['total_budget']:,.0f}")
+    col2.metric("СМР", f"{budget['cmr']:,.0f}")
+    col3.metric("Бюджет на 1 м² общей", f"{economics['budget_per_total_m2']:,.0f}")
+    col4.metric("Выручка", f"{economics['revenue']:,.0f}")
+
+    col5, col6, col7, col8 = st.columns(4)
+    col5.metric("Прибыль после процентов", f"{economics['profit_after_interest']:,.0f}")
+    col6.metric("Маржа после процентов", f"{economics['margin_after_interest']:.1%}")
+    col7.metric("Кредит", f"{credit['max_balance']:,.0f}")
+    col8.metric("Проценты", f"{credit['total_interest']:,.0f}")
+
+    col9, col10, col11, col12 = st.columns(4)
+    col9.metric("Доля продаваемой площади", f"{economics['sellable_ratio']:.1%}")
+    col10.metric("Бюджет на 1 м² продаваемой", f"{economics['budget_per_sellable_m2']:,.0f}")
+    col11.metric("Собственные средства", f"{economics['total_equity_required']:,.0f}")
+    col12.metric("Минимальный DSCR", model["dscr"]["minimum_dscr_after_sales_start"] or "нет обслуживания долга")
+
+    if economics["sellable_ratio"] < 0.65:
+        st.error("Продаваемая площадь слишком низкая: доля продаваемой площади ниже 65%.")
+    elif economics["sellable_ratio"] < 0.72:
+        st.warning("Продаваемая площадь ниже целевого уровня: доля продаваемой площади меньше 72%.")
+
+    st.subheader("Расчёт цены продажи")
+    price_col1, price_col2, price_col3, price_col4 = st.columns(4)
+    price_col1.metric("Расчётная цена продажи за м²", f"{model['estimated_sale_price_per_m2']:,.0f}")
+    price_col2.metric("Источник цены продажи", model["sale_price_source"])
+    price_col3.metric("Рыночный ориентир", f"{model['market_price_per_m2']:,.0f}")
+    price_col4.metric("Цена безубыточности", f"{model['break_even_price_per_m2']:,.0f}")
+    price_col5, price_col6, price_col7 = st.columns(3)
+    price_col5.metric("Цена для целевой маржи 15%", f"{model['target_margin_price_per_m2']:,.0f}")
+    price_col6.metric("Рекомендованная цена продажи", f"{model['recommended_price_per_m2']:,.0f}")
+    price_col7.metric("Разница к рынку", f"{model['price_gap_to_market']:,.0f}")
+    for warning in model["price_estimation_warnings"]:
+        st.warning(warning)
+
+    st.subheader("Что нужно для прохождения проекта по рынку")
+    optimization = model["optimization"]
+    opt_col1, opt_col2, opt_col3, opt_col4, opt_col5 = st.columns(5)
+    opt_col1.metric("Снизить бюджет, млн ₽", f"{optimization['required_budget_reduction_mln_rub']:,.1f}")
+    opt_col2.metric("Целевая СМР за м²", f"{optimization['required_cmr_cost_per_m2_for_market_price']:,.0f}")
+    opt_col3.metric("Нужная продаваемая площадь", f"{optimization['required_sellable_area_for_market_price']:,.0f}")
+    opt_col4.metric("Цена для целевой маржи", f"{optimization['required_sale_price_for_target_margin']:,.0f}")
+    opt_col5.metric("Разница к рынку", f"{optimization['gap_to_market_price']:,.0f}")
+    st.write(f"**Что реалистичнее:** {optimization['most_realistic_option']}")
+    for recommendation in optimization["recommendations"]:
+        st.info(recommendation)
+
+    st.subheader("Расчёт себестоимости")
+    components = model["cost_estimation_components"]
+    coefficients = model["cost_estimation_coefficients"]
+    cost_col1, cost_col2, cost_col3 = st.columns(3)
+    cost_col1.metric("Расчётная себестоимость СМР за м²", f"{model['estimated_cmr_cost_per_m2']:,.0f}")
+    cost_col2.metric("Источник себестоимости", model["cmr_cost_source"])
+    cost_col3.metric("Базовая ставка", f"{components['base_cost_per_m2']:,.0f}")
+    coeff_col1, coeff_col2, coeff_col3, coeff_col4 = st.columns(4)
+    coeff_col1.metric("Коэффициент города", f"{coefficients['city_coefficient']:.2f}")
+    coeff_col2.metric("Коэффициент этажности", f"{coefficients['floors_coefficient']:.2f}")
+    coeff_col3.metric("Коэффициент масштаба", f"{coefficients['area_coefficient']:.2f}")
+    coeff_col4.metric("Коэффициент инженерии", f"{coefficients['engineering_coefficient']:.2f}")
+
+    st.subheader("Риски")
+    risk_levels = {"high": "Высокий", "medium": "Средний", "low": "Низкий", "ok": "Норма"}
+    for risk in model["risks"]:
+        level = risk_levels.get(risk["level"], risk["level"])
+        st.write(f"**{level}** — {risk['title']}: {risk['description']}")
+
+    st.subheader("Сценарный анализ")
+    scenario_rows = []
+    for scenario in model["scenarios"]:
+        scenario_rows.append(
+            {
+                "Сценарий": scenario["scenario_name"],
+                "Выручка": scenario["revenue"],
+                "Итоговый бюджет": scenario["total_budget"],
+                "Прибыль до процентов": scenario["profit_before_interest"],
+                "Прибыль после процентов": scenario["profit_after_interest"],
+                "Маржа после процентов": f"{scenario['margin_after_interest']:.1%}",
+                "Максимальный кредит": scenario["max_credit_balance"],
+                "Собственные средства": scenario["total_equity_required"],
+                "Минимальный DSCR": scenario["minimum_dscr_after_sales_start"],
+                "Месяцев DSCR ниже 1.2": scenario["months_below_1_2"],
+                "Оценка маржи": scenario["margin_assessment"],
+                "Оценка DSCR": scenario["dscr_assessment"],
+            }
+        )
+    st.dataframe(scenario_rows, use_container_width=True)
+    for scenario in model["scenarios"]:
+        margin_label = {"red": "красный", "yellow": "желтый", "green": "зеленый"}.get(
+            scenario["margin_color"],
+            "серый",
+        )
+        dscr_label = {"red": "красный", "green": "зеленый", "gray": "серый"}.get(
+            scenario["dscr_color"],
+            "серый",
+        )
+        st.write(
+            f"{scenario['scenario_name']}: маржа {scenario['margin_assessment']} ({margin_label}); "
+            f"DSCR {scenario['dscr_assessment']} ({dscr_label})"
+        )
+
+    with Path(excel_path).open("rb") as handle:
+        st.download_button(
+            "Скачать Excel",
+            data=handle.read(),
+            file_name=Path(excel_path).name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )

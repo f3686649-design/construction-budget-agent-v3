@@ -1,0 +1,12 @@
+﻿.venv/
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+pytest-cache-files-*/
+*.log
+*.out.log
+*.err.log
+streamlit*.log
+backend/storage/uploads/
+backend/storage/outputs/

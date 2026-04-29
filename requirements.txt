@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+openpyxl
+pydantic
+python-multipart
+pytest
+streamlit
+python-dotenv
