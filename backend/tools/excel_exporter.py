@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 
@@ -24,6 +24,9 @@ SHEET_NAMES = (
     "12_Риски",
     "13_Сценарии",
     "14_Оптимизация",
+    "15_План_улучшений",
+    "16_Поставки",
+    "17_Свод",
 )
 
 RU_LABELS = {
@@ -44,6 +47,11 @@ RU_LABELS = {
     "break_even_price_per_m2": "Цена безубыточности",
     "target_margin_price_per_m2": "Цена для целевой маржи",
     "recommended_price_per_m2": "Рекомендованная цена продажи",
+    "preliminary_recommended_price_per_m2": "Предварительная рекомендованная цена",
+    "final_recommended_price_per_m2": "Финальная рекомендованная цена",
+    "final_target_margin_price_per_m2": "Цена для целевой маржи по фактическим процентам",
+    "price_iteration_count": "Количество итераций расчёта цены",
+    "actual_total_interest_used_for_price": "Фактические проценты, использованные для расчёта цены",
     "price_gap_to_market": "Разница к рынку",
     "base_market_price_per_m2": "Базовая рыночная цена за м²",
     "object_type_price_coefficient": "Коэффициент типа объекта",
@@ -149,6 +157,21 @@ RU_LABELS = {
     "gap_to_market_price": "Разница к рынку",
     "most_realistic_option": "Наиболее реалистичный рычаг",
     "recommendations": "Рекомендации",
+    "project_revenue": "Выручка проекта",
+    "project_cost": "Стоимость проекта",
+    "cmr_total": "СМР",
+    "chapter_1_total": "Глава 1",
+    "chapter_2_total": "Глава 2",
+    "chapter_3_total": "Глава 3",
+    "margin_rub": "Маржа, ₽",
+    "margin_percent": "Маржа, %",
+    "cost_per_sellable_m2": "Себестоимость на 1 м² продаваемой площади",
+    "average_sale_price_per_m2": "Средняя цена продажи на 1 м²",
+    "peak_debt": "Пик долга",
+    "accrued_interest": "Начисленные проценты",
+    "minimum_dscr_for_summary": "Минимальный DSCR",
+    "equity_share": "Доля собственных средств",
+    "ending_debt_balance": "Остаток долга на конец модели",
 }
 
 VALUE_LABELS = {
@@ -251,9 +274,9 @@ def export_model_to_excel(model: dict[str, Any], output_dir: Path) -> Path:
     _write_key_values(sheets["01_Вводные"], model["input"])
     _write_table(sheets["02_Допущения"], model["assumptions"])
     _write_key_values(sheets["03_ТЭП"], model["tep"])
-    _write_table(sheets["04_Бюджет"], model["budget"]["items"])
+    _write_detailed_budget(sheets["04_Бюджет"], model["detailed_budget"])
     _write_table(sheets["05_СМР"], model["cmr"]["items"])
-    _write_table(sheets["06_ГПР"], model["gpr"])
+    _write_work_schedule(sheets["06_ГПР"], model)
     _write_table(sheets["07_План_продаж"], model["sales_plan"])
     _write_table(sheets["08_Кредит"], model["credit"]["schedule"])
     _write_table(sheets["09_ДДС"], model["cashflow"])
@@ -262,10 +285,16 @@ def export_model_to_excel(model: dict[str, Any], output_dir: Path) -> Path:
     _write_table(sheets["12_Риски"], model["risks"])
     _write_table(sheets["13_Сценарии"], model["scenarios"], columns=SCENARIO_COLUMNS, labels=SCENARIO_LABELS)
     _write_optimization(sheets["14_Оптимизация"], model["optimization"])
+    _write_improvement_plan(sheets["15_План_улучшений"], model)
+    _write_supply_plan(sheets["16_Поставки"], model["supply_plan"])
+    _write_summary_sheet(sheets["17_Свод"], model["summary_metrics"])
 
     for sheet in workbook.worksheets:
         _style_sheet(sheet)
+    _style_detailed_budget(sheets["04_Бюджет"])
+    _style_work_schedule(sheets["06_ГПР"], model["work_schedule"])
     _style_scenario_sheet(sheets["13_Сценарии"])
+    _style_improvement_sheet(sheets["15_План_улучшений"])
     workbook.save(path)
     return path
 
@@ -303,6 +332,166 @@ def _write_optimization(sheet: Any, optimization: dict[str, Any]) -> None:
             sheet.append([recommendation])
 
 
+def _write_detailed_budget(sheet: Any, detailed_budget: dict[str, Any]) -> None:
+    columns = (
+        "Глава",
+        "Код",
+        "Статья",
+        "База",
+        "Ед.",
+        "Ставка",
+        "Коэфф.",
+        "Сумма",
+        "Материалы, %",
+        "Работы, %",
+        "Материалы, ₽",
+        "Работы, ₽",
+        "Механизмы, ₽",
+        "Накладные, ₽",
+        "Примечание",
+    )
+    sheet.append(["ДЕТАЛЬНАЯ СТРУКТУРА БЮДЖЕТА"])
+    sheet.append(list(columns))
+    chapter_totals = {str(row["Глава"]): row for row in detailed_budget["chapter_totals"]}
+    for chapter in ("1", "2", "3"):
+        for row in detailed_budget["items"]:
+            if str(row["Глава"]) == chapter:
+                sheet.append([row.get(column) for column in columns])
+        total = chapter_totals[chapter]
+        sheet.append([chapter, "", total["Статья"], "", "", "", "", total["Сумма"], "", "", "", "", "", "", ""])
+    sheet.append(["", "", "ИТОГО БЮДЖЕТ", "", "", "", "", detailed_budget["total_budget"], "", "", "", "", "", "", ""])
+
+
+def _write_work_schedule(sheet: Any, model: dict[str, Any]) -> None:
+    work_schedule = model["work_schedule"]
+    summary = work_schedule["summary"]
+    months = summary["construction_months"]
+    sheet.append(["ГРАФИК ПРОИЗВОДСТВА РАБОТ"])
+    sheet.append(["Название проекта", model["input"].get("project_name")])
+    sheet.append(["Срок строительства", summary["construction_months"], "мес.", "Общий бюджет", model["budget"]["total_budget"]])
+    sheet.append(["Дата старта", summary["start_date"], "Дата окончания", summary["end_date"]])
+    sheet.append([])
+    headers = ["Этап", "Начало, мес.", "Длительность, мес.", "Окончание, мес.", "Стоимость"]
+    headers.extend(f"Месяц {month}" for month in range(1, months + 1))
+    sheet.append(headers)
+    for stage in work_schedule["stages"]:
+        row = [
+            stage["Этап"],
+            stage["Начало, мес."],
+            stage["Длительность, мес."],
+            stage["Окончание, мес."],
+            stage["Стоимость"],
+        ]
+        row.extend(stage["monthly_amounts"])
+        sheet.append(row)
+    sheet.append(["ИТОГО CAPEX В МЕСЯЦ", "", "", "", sum(work_schedule["month_totals"]), *work_schedule["month_totals"]])
+    sheet.append(["НАКОПЛЕННЫЙ CAPEX", "", "", "", work_schedule["cumulative_capex"][-1], *work_schedule["cumulative_capex"]])
+    sheet.append(["% ГОТОВНОСТИ", "", "", "", 1, *work_schedule["readiness"]])
+
+
+def _write_supply_plan(sheet: Any, rows: list[dict[str, Any]]) -> None:
+    columns = (
+        "Месяц",
+        "Дата потребности",
+        "Бетон, м3",
+        "Арматура, т",
+        "Фасадные материалы, ₽",
+        "Инженерное оборудование, ₽",
+        "Дата заказа бетона",
+        "Дата заказа арматуры",
+        "Дата заказа фасада",
+        "Комментарий",
+    )
+    sheet.append(["ГРАФИК ПОСТАВОК МАТЕРИАЛОВ"])
+    sheet.append(list(columns))
+    for row in rows:
+        sheet.append([row.get(column) for column in columns])
+
+
+def _write_summary_sheet(sheet: Any, summary_metrics: dict[str, Any]) -> None:
+    sheet.append(["СВОДНЫЕ ПОКАЗАТЕЛИ"])
+    sheet.append(["Показатель", "Значение", "Ед.", "Комментарий"])
+    rows = (
+        ("project_revenue", "руб.", "Итого выручка проекта"),
+        ("project_cost", "руб.", "Итоговый бюджет проекта"),
+        ("cmr_total", "руб.", "СМР"),
+        ("chapter_1_total", "руб.", "Земля и участок"),
+        ("chapter_2_total", "руб.", "Строительство"),
+        ("chapter_3_total", "руб.", "Коммерческие и прочие расходы"),
+        ("margin_rub", "руб.", "Прибыль после процентов"),
+        ("margin_percent", "%", "Маржа после процентов"),
+        ("cost_per_sellable_m2", "руб./м²", "Бюджет на 1 м² продаваемой площади"),
+        ("average_sale_price_per_m2", "руб./м²", "Средняя цена продажи"),
+        ("peak_debt", "руб.", "Максимальный остаток кредита"),
+        ("accrued_interest", "руб.", "Начисленные проценты"),
+        ("minimum_dscr_for_summary", "x", "Минимальный DSCR после начала продаж"),
+        ("equity_share", "%", "Потребность в собственных средствах / бюджет"),
+        ("ending_debt_balance", "руб.", "Остаток долга на конец модели"),
+    )
+    for key, unit, comment in rows:
+        sheet.append([_label(key), summary_metrics.get(key), unit, comment])
+
+
+def _write_improvement_plan(sheet: Any, model: dict[str, Any]) -> None:
+    improvement = model["improvement_plan"]
+    optimization = model["optimization"]
+    economics = model["economics"]
+
+    sheet.append(["А. Цель оптимизации"])
+    sheet.append(["Показатель", "Значение"])
+    for label, value in (
+        ("Требуемое снижение бюджета", improvement["target_budget_reduction"]),
+        ("Целевая СМР за м²", optimization["required_cmr_cost_per_m2_for_market_price"]),
+        ("Нужная продаваемая площадь", optimization["required_sellable_area_for_market_price"]),
+        ("Рекомендованная цена", economics["recommended_price_per_m2"]),
+        ("Рыночный ориентир", economics["market_price_per_m2"]),
+    ):
+        sheet.append([label, value])
+
+    sheet.append([])
+    sheet.append(["Б. Потенциал экономии по статьям"])
+    _append_ru_table(
+        sheet,
+        improvement["improvement_items"],
+        (
+            "Статья",
+            "Потенциал экономии, ₽",
+            "Потенциал экономии, %",
+            "Сложность реализации",
+            "Риск влияния на качество",
+            "Приоритет",
+            "Комментарий",
+        ),
+    )
+
+    _append_text_section(sheet, "В. Планировочные улучшения", improvement["planning_improvements"])
+    _append_text_section(sheet, "Г. Коммерческие улучшения", improvement["sales_improvements"])
+    _append_text_section(sheet, "Д. Финансовые улучшения", improvement["financing_improvements"])
+    _append_text_section(sheet, "Е. Приоритетные действия", improvement["priority_actions"], numbered=True)
+    if improvement["warnings"]:
+        _append_text_section(sheet, "Предупреждения", improvement["warnings"])
+
+
+def _append_ru_table(sheet: Any, rows: list[dict[str, Any]], columns: tuple[str, ...]) -> None:
+    if not rows:
+        sheet.append(["Нет требуемой экономии"])
+        return
+    sheet.append(list(columns))
+    for row in rows:
+        sheet.append([row.get(column) for column in columns])
+
+
+def _append_text_section(sheet: Any, title: str, items: list[str], numbered: bool = False) -> None:
+    sheet.append([])
+    sheet.append([title])
+    if not items:
+        sheet.append(["Нет рекомендаций"])
+        return
+    for index, item in enumerate(items, start=1):
+        text = f"{index}. {item}" if numbered else item
+        sheet.append([text])
+
+
 def _style_sheet(sheet: Any) -> None:
     header_fill = PatternFill("solid", fgColor="1F4E78")
     header_font = Font(color="FFFFFF", bold=True)
@@ -314,6 +503,78 @@ def _style_sheet(sheet: Any) -> None:
         column_letter = get_column_letter(column_cells[0].column)
         sheet.column_dimensions[column_letter].width = min(max(max_length + 2, 12), 48)
     sheet.freeze_panes = "A2"
+
+
+def _style_detailed_budget(sheet: Any) -> None:
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    total_fill = PatternFill("solid", fgColor="D9EAF7")
+    thin = Side(style="thin", color="B7C9D6")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    for cell in sheet[2]:
+        cell.fill = header_fill
+        cell.font = Font(color="FFFFFF", bold=True)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for row in sheet.iter_rows(min_row=2, max_row=sheet.max_row):
+        for cell in row:
+            cell.border = border
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+        label = str(row[2].value or "")
+        if label.startswith("ИТОГО"):
+            for cell in row:
+                cell.fill = total_fill
+                cell.font = Font(bold=True)
+    for col in range(8, 15):
+        for cell in sheet.iter_cols(min_col=col, max_col=col, min_row=3, max_row=sheet.max_row):
+            for value_cell in cell:
+                value_cell.number_format = '#,##0'
+    sheet.column_dimensions["A"].width = 10
+    sheet.column_dimensions["B"].width = 12
+    sheet.column_dimensions["C"].width = 42
+    sheet.column_dimensions["O"].width = 46
+    sheet.freeze_panes = "A3"
+
+
+def _style_work_schedule(sheet: Any, work_schedule: dict[str, Any]) -> None:
+    header_row = 6
+    monthly_start_col = 6
+    stage_palette = [
+        "D9EAF7",
+        "E2F0D9",
+        "FFF2CC",
+        "EADCF8",
+        "DDEBF7",
+        "FCE4D6",
+        "D9EAD3",
+        "E4DFEC",
+        "DDEBF7",
+        "E2F0D9",
+        "F4CCCC",
+    ]
+    for cell in sheet[header_row]:
+        cell.fill = PatternFill("solid", fgColor="1F4E78")
+        cell.font = Font(color="FFFFFF", bold=True)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for row_index, stage in enumerate(work_schedule["stages"], start=header_row + 1):
+        fill = PatternFill("solid", fgColor=stage_palette[(row_index - header_row - 1) % len(stage_palette)])
+        for col in range(monthly_start_col, monthly_start_col + work_schedule["summary"]["construction_months"]):
+            cell = sheet.cell(row=row_index, column=col)
+            if float(cell.value or 0) > 0:
+                cell.fill = fill
+            cell.number_format = '#,##0'
+        sheet.cell(row=row_index, column=1).font = Font(bold=True)
+    for row in range(sheet.max_row - 2, sheet.max_row + 1):
+        for cell in sheet[row]:
+            cell.fill = PatternFill("solid", fgColor="D9EAF7")
+            cell.font = Font(bold=True)
+            if isinstance(cell.value, float | int):
+                cell.number_format = "0.0%" if row == sheet.max_row else '#,##0'
+    for row in sheet.iter_rows(min_row=1, max_row=sheet.max_row):
+        for cell in row:
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+    for col in range(1, sheet.max_column + 1):
+        sheet.column_dimensions[get_column_letter(col)].width = 14 if col >= monthly_start_col else 18
+    sheet.column_dimensions["A"].width = 34
+    sheet.freeze_panes = "F7"
 
 
 def _style_scenario_sheet(sheet: Any) -> None:
@@ -337,6 +598,16 @@ def _style_scenario_sheet(sheet: Any) -> None:
             sheet.cell(row=row, column=margin_column).fill = PatternFill("solid", fgColor=color_map[margin_color])
         if dscr_column and dscr_color:
             sheet.cell(row=row, column=dscr_column).fill = PatternFill("solid", fgColor=color_map[dscr_color])
+
+
+def _style_improvement_sheet(sheet: Any) -> None:
+    section_fill = PatternFill("solid", fgColor="D9EAF7")
+    for row in range(1, sheet.max_row + 1):
+        value = str(sheet.cell(row=row, column=1).value or "")
+        if value.startswith(("А.", "Б.", "В.", "Г.", "Д.", "Е.", "Предупреждения")):
+            for cell in sheet[row]:
+                cell.fill = section_fill
+                cell.font = Font(bold=True)
 
 
 def _label(key: str, labels: dict[str, str] | None = None) -> str:

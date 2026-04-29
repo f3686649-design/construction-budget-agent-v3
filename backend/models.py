@@ -79,7 +79,27 @@ class EconomicsMetrics(BaseModel):
     break_even_price_per_m2: float | None = None
     target_margin_price_per_m2: float | None = None
     recommended_price_per_m2: float | None = None
+    preliminary_recommended_price_per_m2: float | None = None
+    final_recommended_price_per_m2: float | None = None
+    final_target_margin_price_per_m2: float | None = None
+    price_iteration_count: int = 0
+    actual_total_interest_used_for_price: float | None = None
     price_gap_to_market: float | None = None
+    project_revenue: float | None = None
+    project_cost: float | None = None
+    cmr_total: float | None = None
+    chapter_1_total: float | None = None
+    chapter_2_total: float | None = None
+    chapter_3_total: float | None = None
+    margin_rub: float | None = None
+    margin_percent: float | None = None
+    cost_per_sellable_m2: float | None = None
+    average_sale_price_per_m2: float | None = None
+    peak_debt: float | None = None
+    accrued_interest: float | None = None
+    minimum_dscr_for_summary: float | None = None
+    equity_share: float | None = None
+    ending_debt_balance: float | None = None
 
 
 class GeneratedModel(BaseModel):
@@ -98,6 +118,11 @@ class GeneratedModel(BaseModel):
     break_even_price_per_m2: float
     target_margin_price_per_m2: float
     recommended_price_per_m2: float
+    preliminary_recommended_price_per_m2: float
+    final_recommended_price_per_m2: float
+    final_target_margin_price_per_m2: float
+    price_iteration_count: int
+    actual_total_interest_used_for_price: float
     price_gap_to_market: float
     price_estimation_components: dict[str, Any]
     price_estimation_coefficients: dict[str, Any]
@@ -109,7 +134,13 @@ class GeneratedModel(BaseModel):
     cashflow: list[dict[str, Any]]
     dscr: dict[str, Any]
     economics: EconomicsMetrics
+    detailed_budget: dict[str, Any]
+    work_schedule: dict[str, Any]
+    gpr_summary: dict[str, Any]
+    supply_plan: list[dict[str, Any]]
+    summary_metrics: dict[str, Any]
     optimization: dict[str, Any]
+    improvement_plan: dict[str, Any]
     scenarios: list[dict[str, Any]]
     risks: list[dict[str, Any]]
     trace: list[dict[str, Any]]

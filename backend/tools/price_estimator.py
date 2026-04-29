@@ -152,6 +152,46 @@ def estimate_sale_price(inputs: dict[str, Any], budget: dict[str, Any], economic
     }
 
 
+def recalculate_price_with_actual_interest(
+    *,
+    total_budget: float,
+    actual_total_interest: float,
+    sellable_area: float,
+    market_price_per_m2: float,
+    target_margin: float = TARGET_MARGIN,
+) -> dict[str, Any]:
+    final_target_margin_price = _ceil_to_step(
+        ((total_budget + actual_total_interest) / sellable_area / (1 - target_margin))
+        if sellable_area and target_margin < 1
+        else 0,
+        1000,
+    )
+    final_recommended_price = max(float(market_price_per_m2), final_target_margin_price)
+    return {
+        "final_target_margin_price_per_m2": final_target_margin_price,
+        "final_recommended_price_per_m2": final_recommended_price,
+        "actual_total_interest_used_for_price": round(float(actual_total_interest), 2),
+        "price_gap_to_market": final_recommended_price - float(market_price_per_m2),
+        "trace": [
+            {
+                "step": "recalculate_price_with_actual_interest",
+                "inputs": {
+                    "total_budget": total_budget,
+                    "actual_total_interest": actual_total_interest,
+                    "sellable_area": sellable_area,
+                    "market_price_per_m2": market_price_per_m2,
+                    "target_margin": target_margin,
+                },
+                "formula": "final_recommended = max(market_price, (total_budget + actual_interest) / sellable_area / (1 - target_margin))",
+                "output": {
+                    "final_target_margin_price_per_m2": final_target_margin_price,
+                    "final_recommended_price_per_m2": final_recommended_price,
+                },
+            }
+        ],
+    }
+
+
 def _estimate_interest(inputs: dict[str, Any], total_budget: float) -> float:
     credit_share = float(inputs.get("credit_share") or 0)
     credit_rate = float(inputs.get("credit_rate") or 0)

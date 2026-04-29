@@ -52,6 +52,7 @@ with st.form("model_form"):
         credit_rate = st.number_input("Ставка кредита", min_value=0.0, value=0.0, step=0.01)
         external_networks_included = st.selectbox("Наружные сети включены?", ["нет", "да"]) == "да"
         gas_only_cooking = st.selectbox("Газ только пищеприготовление?", ["да", "нет"]) == "да"
+        budget_format = st.selectbox("Формат бюджета", ["Укрупнённый", "Детальный по статьям"])
 
     submitted = st.form_submit_button("Сформировать финансовую модель")
 
@@ -107,14 +108,15 @@ if submitted:
 
     st.subheader("Расчёт цены продажи")
     price_col1, price_col2, price_col3, price_col4 = st.columns(4)
-    price_col1.metric("Расчётная цена продажи за м²", f"{model['estimated_sale_price_per_m2']:,.0f}")
+    price_col1.metric("Предварительная рекомендованная цена", f"{model['preliminary_recommended_price_per_m2']:,.0f}")
     price_col2.metric("Источник цены продажи", model["sale_price_source"])
     price_col3.metric("Рыночный ориентир", f"{model['market_price_per_m2']:,.0f}")
     price_col4.metric("Цена безубыточности", f"{model['break_even_price_per_m2']:,.0f}")
-    price_col5, price_col6, price_col7 = st.columns(3)
-    price_col5.metric("Цена для целевой маржи 15%", f"{model['target_margin_price_per_m2']:,.0f}")
-    price_col6.metric("Рекомендованная цена продажи", f"{model['recommended_price_per_m2']:,.0f}")
+    price_col5, price_col6, price_col7, price_col8 = st.columns(4)
+    price_col5.metric("Цена для целевой маржи по фактическим процентам", f"{model['final_target_margin_price_per_m2']:,.0f}")
+    price_col6.metric("Финальная рекомендованная цена", f"{model['final_recommended_price_per_m2']:,.0f}")
     price_col7.metric("Разница к рынку", f"{model['price_gap_to_market']:,.0f}")
+    price_col8.metric("Итераций расчёта цены", model["price_iteration_count"])
     for warning in model["price_estimation_warnings"]:
         st.warning(warning)
 
@@ -130,6 +132,35 @@ if submitted:
     for recommendation in optimization["recommendations"]:
         st.info(recommendation)
 
+    st.subheader("Автоматический план улучшения проекта")
+    improvement_plan = model["improvement_plan"]
+    st.metric("Целевое снижение бюджета", f"{improvement_plan['target_budget_reduction']:,.0f}")
+    if improvement_plan["summary"]:
+        st.write(improvement_plan["summary"])
+    if improvement_plan["improvement_items"]:
+        st.write("**Потенциал экономии по статьям**")
+        st.dataframe(improvement_plan["improvement_items"], use_container_width=True)
+    else:
+        st.success("Проект проходит по рыночной цене: обязательное снижение бюджета не требуется.")
+
+    plan_col1, plan_col2 = st.columns(2)
+    with plan_col1:
+        st.write("**Планировочные улучшения**")
+        for item in improvement_plan["planning_improvements"]:
+            st.write(f"- {item}")
+        st.write("**Коммерческие улучшения**")
+        for item in improvement_plan["sales_improvements"]:
+            st.write(f"- {item}")
+    with plan_col2:
+        st.write("**Финансовые улучшения**")
+        for item in improvement_plan["financing_improvements"]:
+            st.write(f"- {item}")
+        st.write("**Приоритетные действия**")
+        for index, item in enumerate(improvement_plan["priority_actions"], start=1):
+            st.write(f"{index}. {item}")
+    for warning in improvement_plan["warnings"]:
+        st.warning(warning)
+
     st.subheader("Расчёт себестоимости")
     components = model["cost_estimation_components"]
     coefficients = model["cost_estimation_coefficients"]
@@ -142,6 +173,48 @@ if submitted:
     coeff_col2.metric("Коэффициент этажности", f"{coefficients['floors_coefficient']:.2f}")
     coeff_col3.metric("Коэффициент масштаба", f"{coefficients['area_coefficient']:.2f}")
     coeff_col4.metric("Коэффициент инженерии", f"{coefficients['engineering_coefficient']:.2f}")
+
+    st.subheader("Бюджет проекта")
+    if budget_format == "Детальный по статьям":
+        chapter_rows = [
+            {"Глава": row["Глава"], "Статья": row["Статья"], "Сумма": row["Сумма"]}
+            for row in model["detailed_budget"]["chapter_totals"]
+        ]
+        st.write("**Итоги по главам**")
+        st.dataframe(chapter_rows, use_container_width=True)
+        st.write("**Детальная структура бюджета**")
+        st.dataframe(model["detailed_budget"]["items"], use_container_width=True)
+        split = model["detailed_budget"]["split_totals"]
+        split_col1, split_col2, split_col3, split_col4 = st.columns(4)
+        split_col1.metric("Материалы", f"{split['materials']:,.0f}")
+        split_col2.metric("Работы", f"{split['works']:,.0f}")
+        split_col3.metric("Механизмы", f"{split['machinery']:,.0f}")
+        split_col4.metric("Накладные", f"{split['overheads']:,.0f}")
+    else:
+        st.dataframe(budget["items"], use_container_width=True)
+
+    st.subheader("График производства работ")
+    gpr_summary = model["gpr_summary"]
+    gpr_col1, gpr_col2, gpr_col3, gpr_col4 = st.columns(4)
+    gpr_col1.metric("Длительность строительства", f"{gpr_summary['construction_months']} мес.")
+    gpr_col2.metric("Пиковый месяц CAPEX", f"{gpr_summary['peak_capex_month']} мес.")
+    gpr_col3.metric("Средний CAPEX в месяц", f"{gpr_summary['average_monthly_capex']:,.0f}")
+    gpr_col4.metric("Окончание основных работ", f"{gpr_summary['main_work_end_month']} мес.")
+    if gpr_summary["is_short_schedule"]:
+        st.warning("Срок строительства выглядит слишком коротким: проверьте реализуемость графика, поставки и сезонность.")
+    st.dataframe(
+        [
+            {
+                "Этап": row["Этап"],
+                "Начало, мес.": row["Начало, мес."],
+                "Длительность, мес.": row["Длительность, мес."],
+                "Окончание, мес.": row["Окончание, мес."],
+                "Стоимость": row["Стоимость"],
+            }
+            for row in model["work_schedule"]["stages"]
+        ],
+        use_container_width=True,
+    )
 
     st.subheader("Риски")
     risk_levels = {"high": "Высокий", "medium": "Средний", "low": "Низкий", "ok": "Норма"}

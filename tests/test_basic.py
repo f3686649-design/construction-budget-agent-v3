@@ -13,6 +13,20 @@ def _minimal_model() -> dict:
     return build_financial_model(ProjectInput(project_name="Минимальный проект"))
 
 
+def _model_with_market_gap() -> dict:
+    return build_financial_model(
+        ProjectInput(
+            project_name="Разрыв к рынку",
+            city="Якутск",
+            object_type="Жилой дом",
+            object_class="комфорт",
+            total_area=10_000,
+            sellable_area=7_800,
+            floors=9,
+        )
+    )
+
+
 def test_health_works() -> None:
     assert health() == {"status": "ok"}
 
@@ -26,6 +40,7 @@ def test_model_is_created_from_minimal_data() -> None:
     assert payload["cmr_cost_source"] == "Расчётная себестоимость агента"
     assert payload["recommended_price_per_m2"] > 0
     assert payload["sale_price_source"] == "Расчётная цена продажи агента"
+    assert payload["improvement_plan"]["priority_actions"]
     assert payload["assumptions"]
 
 
@@ -252,6 +267,7 @@ def test_manual_sale_price_has_priority() -> None:
     assert model["sale_price_source"] == "Ручная цена продажи"
     assert model["input"]["sale_price_per_m2"] == 210_000
     assert model["economics"]["revenue"] == pytest.approx(7_800 * 210_000)
+    assert model["price_iteration_count"] == 0
 
 
 def test_yakutsk_comfort_market_price_starts_from_180000() -> None:
@@ -305,17 +321,7 @@ def test_optimization_advisor_creates_recommendations() -> None:
 
 
 def test_optimization_gap_when_recommended_price_is_above_market() -> None:
-    model = build_financial_model(
-        ProjectInput(
-            project_name="Разрыв к рынку",
-            city="Якутск",
-            object_type="Жилой дом",
-            object_class="комфорт",
-            total_area=10_000,
-            sellable_area=7_800,
-            floors=9,
-        )
-    )
+    model = _model_with_market_gap()
     assert model["recommended_price_per_m2"] > model["market_price_per_m2"]
     assert model["optimization"]["gap_to_market_price"] == pytest.approx(
         model["recommended_price_per_m2"] - model["market_price_per_m2"]
@@ -341,6 +347,188 @@ def test_excel_displays_english_object_class_in_russian() -> None:
         assert "14_Оптимизация" in workbook.sheetnames
         rows = {row[0]: row[1] for row in workbook["03_ТЭП"].iter_rows(min_row=2, values_only=True)}
         assert rows["Класс объекта"] == "комфорт"
+    finally:
+        if workbook is not None:
+            workbook.close()
+        path.unlink(missing_ok=True)
+
+
+def test_improvement_plan_is_created() -> None:
+    model = _minimal_model()
+    improvement_plan = model["improvement_plan"]
+    assert improvement_plan["summary"]
+    assert improvement_plan["priority_actions"]
+    assert improvement_plan["assumptions"]
+
+
+def test_improvement_items_exist_when_budget_reduction_is_required() -> None:
+    model = _model_with_market_gap()
+    assert model["optimization"]["required_budget_reduction_for_market_price"] > 0
+    assert model["improvement_plan"]["improvement_items"]
+
+
+def test_improvement_items_sum_to_required_budget_reduction() -> None:
+    model = _model_with_market_gap()
+    target = model["improvement_plan"]["target_budget_reduction"]
+    savings_sum = sum(item["Потенциал экономии, ₽"] for item in model["improvement_plan"]["improvement_items"])
+    assert savings_sum == pytest.approx(target, abs=0.05)
+
+
+def test_reserve_is_not_first_improvement_source() -> None:
+    model = _model_with_market_gap()
+    items = model["improvement_plan"]["improvement_items"]
+    assert items[0]["Статья"] != "Резерв"
+    assert all(item["Статья"] != "Резерв" for item in items)
+
+
+def test_excel_contains_improvement_plan_sheet() -> None:
+    model = _model_with_market_gap()
+    path = export_model_to_excel(model, OUTPUT_DIR)
+    workbook = None
+    try:
+        workbook = load_workbook(path, read_only=True)
+        assert "15_План_улучшений" in workbook.sheetnames
+        first_cell = workbook["15_План_улучшений"]["A1"].value
+        assert first_cell == "А. Цель оптимизации"
+    finally:
+        if workbook is not None:
+            workbook.close()
+        path.unlink(missing_ok=True)
+
+
+def test_auto_price_is_consistent_between_tep_and_optimization_excel() -> None:
+    model = _model_with_market_gap()
+    path = export_model_to_excel(model, OUTPUT_DIR)
+    workbook = None
+    try:
+        workbook = load_workbook(path, read_only=True)
+        tep_rows = {row[0]: row[1] for row in workbook["03_ТЭП"].iter_rows(min_row=2, values_only=True)}
+        optimization_rows = {
+            row[0]: row[1]
+            for row in workbook["14_Оптимизация"].iter_rows(min_row=2, values_only=True)
+            if row[0] is not None
+        }
+        assert tep_rows["Финальная рекомендованная цена"] == model["final_recommended_price_per_m2"]
+        assert tep_rows["Цена для целевой маржи по фактическим процентам"] == optimization_rows["Цена для целевой маржи"]
+    finally:
+        if workbook is not None:
+            workbook.close()
+        path.unlink(missing_ok=True)
+
+
+def test_manual_sale_price_is_not_overwritten_by_final_recalculation() -> None:
+    model = build_financial_model(
+        ProjectInput(
+            project_name="Ручная цена без перезаписи",
+            city="Якутск",
+            total_area=10_000,
+            sellable_area=7_800,
+            sale_price_per_m2=210_000,
+        )
+    )
+    assert model["input"]["sale_price_per_m2"] == 210_000
+    assert model["sale_price_source"] == "Ручная цена продажи"
+    assert model["price_iteration_count"] == 0
+
+
+def test_price_iteration_count_is_limited() -> None:
+    model = _model_with_market_gap()
+    assert model["price_iteration_count"] <= 3
+
+
+def test_detailed_budget_generator_creates_budget_items() -> None:
+    model = _minimal_model()
+    detailed_budget = model["detailed_budget"]
+    assert detailed_budget["items"]
+    assert {"Глава", "Код", "Статья", "Сумма"}.issubset(detailed_budget["items"][0])
+
+
+def test_detailed_budget_sum_equals_total_budget() -> None:
+    model = _minimal_model()
+    detail_sum = sum(row["Сумма"] for row in model["detailed_budget"]["items"])
+    assert detail_sum == pytest.approx(model["budget"]["total_budget"], abs=0.05)
+
+
+def test_detailed_budget_contains_materials_and_works() -> None:
+    model = _minimal_model()
+    split = model["detailed_budget"]["split_totals"]
+    assert split["materials"] > 0
+    assert split["works"] > 0
+
+
+def test_excel_budget_sheet_contains_detailed_structure() -> None:
+    model = _minimal_model()
+    path = export_model_to_excel(model, OUTPUT_DIR)
+    workbook = None
+    try:
+        workbook = load_workbook(path, read_only=True)
+        sheet = workbook["04_Бюджет"]
+        headers = [cell.value for cell in next(sheet.iter_rows(min_row=2, max_row=2))]
+        assert headers[:15] == [
+            "Глава",
+            "Код",
+            "Статья",
+            "База",
+            "Ед.",
+            "Ставка",
+            "Коэфф.",
+            "Сумма",
+            "Материалы, %",
+            "Работы, %",
+            "Материалы, ₽",
+            "Работы, ₽",
+            "Механизмы, ₽",
+            "Накладные, ₽",
+            "Примечание",
+        ]
+        labels = [row[2] for row in sheet.iter_rows(min_row=3, values_only=True) if row[2]]
+        assert "ИТОГО БЮДЖЕТ" in labels
+    finally:
+        if workbook is not None:
+            workbook.close()
+        path.unlink(missing_ok=True)
+
+
+def test_excel_gpr_sheet_contains_monthly_work_structure() -> None:
+    model = _minimal_model()
+    path = export_model_to_excel(model, OUTPUT_DIR)
+    workbook = None
+    try:
+        workbook = load_workbook(path, read_only=True)
+        sheet = workbook["06_ГПР"]
+        headers = [cell.value for cell in next(sheet.iter_rows(min_row=6, max_row=6))]
+        assert headers[:6] == ["Этап", "Начало, мес.", "Длительность, мес.", "Окончание, мес.", "Стоимость", "Месяц 1"]
+        labels = [row[0] for row in sheet.iter_rows(values_only=True) if row[0]]
+        assert "ИТОГО CAPEX В МЕСЯЦ" in labels
+        assert "НАКОПЛЕННЫЙ CAPEX" in labels
+        assert "% ГОТОВНОСТИ" in labels
+    finally:
+        if workbook is not None:
+            workbook.close()
+        path.unlink(missing_ok=True)
+
+
+def test_excel_contains_supply_plan_sheet() -> None:
+    model = _minimal_model()
+    path = export_model_to_excel(model, OUTPUT_DIR)
+    workbook = None
+    try:
+        workbook = load_workbook(path, read_only=True)
+        assert "16_Поставки" in workbook.sheetnames
+        sheet = workbook["16_Поставки"]
+        headers = [cell.value for cell in next(sheet.iter_rows(min_row=2, max_row=2))]
+        assert headers == [
+            "Месяц",
+            "Дата потребности",
+            "Бетон, м3",
+            "Арматура, т",
+            "Фасадные материалы, ₽",
+            "Инженерное оборудование, ₽",
+            "Дата заказа бетона",
+            "Дата заказа арматуры",
+            "Дата заказа фасада",
+            "Комментарий",
+        ]
     finally:
         if workbook is not None:
             workbook.close()

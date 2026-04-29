@@ -6,12 +6,19 @@ Construction Budget Agent v3 generates a developer financial model from core pro
 
 - Project assumptions and TEP
 - Budget: land, CMR, design, technical customer, general contractor, networks, landscaping, reserve
+- Detailed ModDEV-style budget by chapters, articles, materials, works, machinery, and overheads
 - CMR split: materials, works, machinery, overheads, reserve
-- Construction GPR by S-curve
+- Developer-ready construction GPR with stage schedule, monthly CAPEX, cumulative CAPEX, and readiness
+- Supply plan for concrete, rebar, facade materials, and engineering equipment
 - Sales plan with slow start, mid-period peak, and final tail
 - Credit schedule with drawdown, interest, repayment, closing balance
 - Cashflow, DSCR, economics, risks
-- Excel workbook with sheets `01_Вводные` through `12_Риски`
+- Scenario analysis, market-price optimization, and an automatic project improvement plan
+- Excel workbook with sheets `01_Вводные` through `17_Свод`
+
+## Optimization And Improvement Plan
+
+The agent now checks whether the project passes at the market sale price and then builds a practical improvement plan. It shows the required budget reduction, target CMR per m², required sellable area, value-engineering items, planning improvements, sales actions, financing actions, and 5–7 priority actions for the developer.
 
 ## Run API
 
