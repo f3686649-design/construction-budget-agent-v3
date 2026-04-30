@@ -12,7 +12,12 @@ from backend.tools.budget_generator import generate_budget
 from backend.tools.cashflow_model import build_operations, generate_cashflow
 from backend.tools.cmr_splitter import split_cmr
 from backend.tools.credit_model import generate_credit_schedule
-from backend.tools.detailed_budget_generator import generate_detailed_budget, generate_supply_plan, generate_work_schedule
+from backend.tools.detailed_budget_generator import (
+    apply_detailed_budget_to_budget,
+    generate_detailed_budget,
+    generate_supply_plan,
+    generate_work_schedule,
+)
 from backend.tools.dscr_model import calculate_dscr
 from backend.tools.excel_exporter import export_model_to_excel
 from backend.tools.gpr_generator import generate_gpr
@@ -65,6 +70,23 @@ def build_financial_model(project_input: ProjectInput) -> dict[str, Any]:
     assumptions.extend(budget["cost_estimation_assumptions"])
     data["estimated_cmr_cost_per_m2"] = budget["estimated_cmr_cost_per_m2"]
     data["cmr_cost_source"] = budget["cmr_cost_source"]
+
+    detailed_budget = generate_detailed_budget(data, budget, {})
+    trace.extend(detailed_budget.pop("trace"))
+    budget = apply_detailed_budget_to_budget(data, budget, detailed_budget)
+    trace.append(
+        {
+            "step": "apply_detailed_budget_to_budget",
+            "inputs": {"base_budget_total": budget.get("base_total_budget")},
+            "formula": "Итоговый бюджет модели принимается равным сумме детального бюджета без компенсационного распределения.",
+            "output": {
+                "total_budget": budget["total_budget"],
+                "cmr": budget["cmr"],
+                "engineering_systems_amount": data.get("engineering_systems_amount"),
+                "pile_foundation_amount": data.get("pile_foundation_amount"),
+            },
+        }
+    )
 
     price_estimation = estimate_sale_price(data, budget, {})
     trace.extend(price_estimation["trace"])
@@ -156,8 +178,6 @@ def build_financial_model(project_input: ProjectInput) -> dict[str, Any]:
     if data["final_target_margin_price_per_m2"] > data["market_price_per_m2"]:
         price_estimation_warnings.append(price_warning)
 
-    detailed_budget = generate_detailed_budget(data, budget, economics)
-    trace.extend(detailed_budget.pop("trace"))
     work_schedule = generate_work_schedule(data, budget, detailed_budget)
     trace.extend(work_schedule.pop("trace"))
     supply_plan = generate_supply_plan(data, detailed_budget, work_schedule)
@@ -437,6 +457,9 @@ def _build_summary_metrics(
     ending_debt_balance = credit["schedule"][-1]["closing_balance"] if credit.get("schedule") else 0
     total_budget = float(budget.get("total_budget") or 0)
     total_equity_required = float(economics.get("total_equity_required") or 0)
+    items_by_code = {str(row["Код"]): row for row in detailed_budget["items"]}
+    engineering_systems_amount = sum(float(items_by_code.get(code, {}).get("Сумма") or 0) for code in ("2.11", "2.12", "2.13", "2.14", "2.15"))
+    cmr_total = float(budget.get("cmr") or 0)
     return {
         "project_revenue": economics["revenue"],
         "project_cost": budget["total_budget"],
@@ -453,4 +476,8 @@ def _build_summary_metrics(
         "minimum_dscr_for_summary": economics["minimum_dscr_after_sales_start"],
         "equity_share": round(total_equity_required / total_budget, 4) if total_budget else 0,
         "ending_debt_balance": ending_debt_balance,
+        "pile_foundation_amount": round_money(float(items_by_code.get("2.3", {}).get("Сумма") or 0)),
+        "engineering_systems_amount": round_money(engineering_systems_amount),
+        "engineering_systems_share_of_cmr": round(engineering_systems_amount / cmr_total, 4) if cmr_total else 0,
+        "adjusted_total_budget": budget["total_budget"],
     }

@@ -22,39 +22,32 @@ DESIGN_CAP_AMOUNT = 10_000_000
 
 def generate_detailed_budget(data: dict[str, Any], budget: dict[str, Any], economics: dict[str, Any] | None = None) -> dict[str, Any]:
     economics = economics or {}
-    bucket_totals = {
-        "land": float(budget.get("land") or 0),
-        "cmr": float(budget.get("cmr") or 0),
-        "external_networks": float(budget.get("external_networks") or 0),
-        "landscaping": float(budget.get("landscaping") or 0),
-        "design": float(budget.get("design") or 0),
-        "technical_customer": float(budget.get("technical_customer") or 0),
-        "general_contractor": float(budget.get("general_contractor") or 0),
+    grouped = _catalog_by_source()
+    cmr_core_total = _calculate_cmr_core_total(data)
+    source_totals = {
+        "land": float(budget.get("land") or data.get("land_cost") or 0),
+        "cmr": cmr_core_total,
+        "external_networks": cmr_core_total * float(data.get("external_networks") or 0)
+        if bool(data.get("external_networks_included"))
+        else 0.0,
+        "landscaping": cmr_core_total * float(data.get("landscaping") or 0),
+        "design": float(data.get("design_cost_amount") or budget.get("design") or 0),
+        "technical_customer": cmr_core_total * float(data.get("technical_customer") or 0),
+        "general_contractor": cmr_core_total * float(data.get("general_contractor") or 0),
         "marketing": 0.0,
-        "reserve": float(budget.get("reserve") or 0),
+        "reserve": cmr_core_total * float(data.get("reserve") or 0),
         "revenue": float(economics.get("revenue") or 0),
     }
-    grouped = _catalog_by_source()
-    remaining_by_source: dict[str, float] = {}
     items: list[dict[str, Any]] = []
 
     for source, entries in grouped.items():
-        total = bucket_totals.get(source, 0.0)
-        amounts = _amounts_for_source(source, entries, total, data)
-        remaining_by_source[source] = total
-        for entry, amount in zip(entries, amounts, strict=True):
-            remaining_by_source[source] -= amount
+        for entry in entries:
+            amount = _amount_for_entry(entry, source_totals, data, budget, economics)
             row = _build_row(_effective_entry(entry, data), amount, data, budget, economics)
             items.append(row)
 
     items.sort(key=lambda row: _sort_code(str(row["Код"])))
     total_budget = round_money(sum(row["Сумма"] for row in items))
-    drift = round_money(float(budget["total_budget"]) - total_budget)
-    if items and abs(drift) >= 0.01:
-        items[-1]["Сумма"] = round_money(items[-1]["Сумма"] + drift)
-        _apply_split_amounts(items[-1])
-        total_budget = round_money(sum(row["Сумма"] for row in items))
-
     chapter_totals = _chapter_totals(items)
     split_totals = {
         "materials": round_money(sum(row["Материалы, ₽"] for row in items)),
@@ -62,7 +55,7 @@ def generate_detailed_budget(data: dict[str, Any], budget: dict[str, Any], econo
         "machinery": round_money(sum(row["Механизмы, ₽"] for row in items)),
         "overheads": round_money(sum(row["Накладные, ₽"] for row in items)),
     }
-    budget_adjustments = _budget_adjustments(items)
+    budget_adjustments = _budget_adjustments(items, data)
     return {
         "items": items,
         "chapter_totals": chapter_totals,
@@ -72,18 +65,54 @@ def generate_detailed_budget(data: dict[str, Any], budget: dict[str, Any], econo
         "trace": [
             {
                 "step": "generate_detailed_budget",
-                "inputs": {"budget_total": budget["total_budget"], "items_count": len(items)},
-                "formula": "Agent budget buckets distributed into ModDEV-like detailed cost structure.",
+                "inputs": {"base_budget_total": budget["total_budget"], "items_count": len(items)},
+                "formula": "Detailed line items are calculated directly from rates and amounts; no residual redistribution to old total_budget.",
                 "output": {
                     "total_budget": total_budget,
                     "chapter_totals": chapter_totals,
                     "split_totals": split_totals,
                     "budget_adjustments": budget_adjustments,
-                    "drift": drift,
+                    "base_budget_total": budget["total_budget"],
                 },
             }
         ],
     }
+
+
+def apply_detailed_budget_to_budget(data: dict[str, Any], budget: dict[str, Any], detailed_budget: dict[str, Any]) -> dict[str, Any]:
+    totals = _source_totals_from_items(detailed_budget["items"])
+    total_area = float(data.get("total_area") or 0)
+    total_budget = round_money(float(detailed_budget["total_budget"]))
+    updated = dict(budget)
+    updated["base_total_budget"] = budget.get("total_budget")
+    updated.update(
+        {
+            "land": round_money(totals.get("land", 0)),
+            "cmr": round_money(totals.get("cmr", 0)),
+            "external_networks": round_money(totals.get("external_networks", 0)),
+            "landscaping": round_money(totals.get("landscaping", 0)),
+            "design": round_money(totals.get("design", 0)),
+            "technical_customer": round_money(totals.get("technical_customer", 0)),
+            "general_contractor": round_money(totals.get("general_contractor", 0)),
+            "reserve": round_money(totals.get("reserve", 0)),
+            "total_budget": total_budget,
+            "cost_per_total_m2": round_money(total_budget / total_area if total_area else 0),
+            "construction_price_per_m2": round_money(totals.get("cmr", 0) / total_area if total_area else 0),
+            "budget_source": "Детальный бюджет по статьям",
+        }
+    )
+    updated["items"] = _summary_budget_items_from_detail(updated)
+
+    engineering_total = _engineering_total(detailed_budget["items"])
+    pile_item = _item_by_code(detailed_budget["items"], "2.3")
+    underground_item = _item_by_code(detailed_budget["items"], "2.4")
+    data["pile_foundation_amount"] = round_money(float(pile_item.get("Сумма") or 0))
+    data["pile_foundation_rate"] = round_money(float(pile_item.get("Ставка") or 0))
+    data["underground_part_amount"] = round_money(float(underground_item.get("Сумма") or 0))
+    data["engineering_systems_amount"] = engineering_total
+    data["engineering_systems_share_of_cmr"] = round(engineering_total / float(updated["cmr"]), 4) if updated["cmr"] else 0.0
+    data["adjusted_total_budget"] = total_budget
+    return updated
 
 
 def generate_work_schedule(
@@ -298,36 +327,57 @@ def _allocate(total: float, shares: list[float]) -> list[float]:
     return allocated
 
 
-def _amounts_for_source(source: str, entries: list[dict[str, Any]], total: float, data: dict[str, Any]) -> list[float]:
-    if source != "cmr":
-        return _allocate(total, [float(entry.get("доля источника") or 0) for entry in entries])
+def _amount_for_entry(
+    entry: dict[str, Any],
+    source_totals: dict[str, float],
+    data: dict[str, Any],
+    budget: dict[str, Any],
+    economics: dict[str, Any],
+) -> float:
+    code = str(entry["код"])
+    source = str(entry["источник"])
+    if source == "cmr":
+        return _cmr_entry_amount(code, data)
+    total = source_totals.get(source, 0.0)
+    share = float(entry.get("доля источника") or 1)
+    return round_money(total * share)
 
-    fixed: dict[str, float] = {
-        "2.1": _preparation_amount(data),
-        "2.2": _earthworks_amount(data),
-        "2.3": _foundation_amount(data),
-        "2.5": _above_ground_structures_amount(data),
-        "2.6": _envelope_roof_walls_amount(data),
-        "2.8": _sellable_finish_amount(data),
+
+def _calculate_cmr_core_total(data: dict[str, Any]) -> float:
+    return round_money(sum(_cmr_entry_amount(str(entry["код"]), data) for entry in RATE_CATALOG if entry["источник"] == "cmr"))
+
+
+def _cmr_entry_amount(code: str, data: dict[str, Any]) -> float:
+    total_area = float(data.get("total_area") or 0)
+    rates = {
+        "2.7": 3_500,
+        "2.9": 7_000,
+        "2.10": 2_500,
+        "2.11": _engineering_rate(data, "plumbing_rate_override", 4_200),
+        "2.12": _engineering_rate(data, "heating_rate_override", 5_200),
+        "2.13": _engineering_rate(data, "electrical_rate_override", 4_600),
+        "2.14": _engineering_rate(data, "low_voltage_rate_override", 1_500),
+        "2.15": _engineering_rate(data, "ventilation_rate_override", 2_500),
     }
-    if not bool(data.get("has_underground_part")):
-        fixed["2.4"] = 0.0
-    fixed_total = sum(fixed.values())
-    if fixed_total > total and fixed_total > 0:
-        scale = total / fixed_total
-        fixed = {code: round_money(amount * scale) for code, amount in fixed.items()}
-        fixed_total = sum(fixed.values())
-
-    variable_entries = [entry for entry in entries if str(entry["код"]) not in fixed]
-    remaining = max(0.0, total - fixed_total)
-    variable_amounts = _allocate(remaining, [float(entry.get("доля источника") or 0) for entry in variable_entries])
-    variable_by_code = {str(entry["код"]): amount for entry, amount in zip(variable_entries, variable_amounts, strict=True)}
-    amounts = [round_money(fixed.get(str(entry["код"]), variable_by_code.get(str(entry["код"]), 0.0))) for entry in entries]
-    drift = round_money(total - sum(amounts))
-    if amounts and abs(drift) >= 0.01:
-        adjustable_index = next((index for index, entry in reversed(list(enumerate(entries))) if str(entry["код"]) != "2.4"), len(amounts) - 1)
-        amounts[adjustable_index] = round_money(amounts[adjustable_index] + drift)
-    return amounts
+    if code == "2.1":
+        amount = _preparation_amount(data)
+    elif code == "2.2":
+        amount = _earthworks_amount(data)
+    elif code == "2.3":
+        amount = _foundation_amount(data)
+    elif code == "2.4":
+        amount = 0.0 if not bool(data.get("has_underground_part")) else round_money(total_area * 12_000)
+    elif code == "2.5":
+        amount = _above_ground_structures_amount(data)
+    elif code == "2.6":
+        amount = _envelope_roof_walls_amount(data)
+    elif code == "2.8":
+        amount = _sellable_finish_amount(data)
+    else:
+        amount = round_money(total_area * rates.get(code, float(_catalog_rate(code) or 0)))
+    if code.startswith("2.") and code != "2.4":
+        amount = round_money(amount * _detailed_cost_multiplier(data))
+    return amount
 
 
 def _effective_entry(entry: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
@@ -355,9 +405,12 @@ def _effective_entry(entry: dict[str, Any], data: dict[str, Any]) -> dict[str, A
         elif foundation_type == "сваи" and not has_underground:
             effective["примечание"] = "Сниженный объём земляных работ: свайный фундамент, подземная часть отсутствует."
     if code == "2.3" and foundation_type == "сваи":
+        manual = _foundation_manual_mode(data)
         effective["статья"] = "Свайное основание / ростверк"
-        effective["примечание"] = "Свайный фундамент рассчитан отдельной статьёй, без смешения со стоимостью подземной части."
-        effective["источник значения"] = "технологическая корректировка"
+        effective["ставка"] = _foundation_rate(data)
+        effective["нормативная ставка"] = 6_500
+        effective["примечание"] = "Свайный фундамент без подземной части. Котлован, плита и подземный конструктив не предусмотрены."
+        effective["источник значения"] = manual or _foundation_source(data)
     if code == "2.4" and not has_underground:
         effective["примечание"] = "Не предусмотрено: подземная часть отсутствует."
         effective["источник значения"] = "технологическая корректировка"
@@ -385,6 +438,20 @@ def _effective_entry(entry: dict[str, Any], data: dict[str, Any]) -> dict[str, A
         effective["ставка"] = _finish_rate(finish_level)
         effective["примечание"] = f"Отделка реализуемых помещений: {data.get('sellable_finish_level') or 'черновая'}."
         effective["источник значения"] = "технологическая корректировка"
+    if code in {"2.11", "2.12", "2.13", "2.14", "2.15"}:
+        override_by_code = {
+            "2.11": ("plumbing_rate_override", 4_200, "Сантехнические системы рассчитаны по оптимизированному нормативу или ручной ставке."),
+            "2.12": ("heating_rate_override", 5_200, "Отопление / ИТП / узел учета рассчитаны по оптимизированному нормативу или ручной ставке."),
+            "2.13": ("electrical_rate_override", 4_600, "Электроснабжение рассчитано по оптимизированному нормативу или ручной ставке."),
+            "2.14": ("low_voltage_rate_override", 1_500, "Слаботочные системы рассчитаны по оптимизированному нормативу или ручной ставке."),
+            "2.15": ("ventilation_rate_override", 2_500, "Вентиляция / дымоудаление рассчитаны по оптимизированному нормативу или ручной ставке."),
+        }
+        override_field, default_rate, note = override_by_code[code]
+        manual = float(data.get(override_field) or 0) > 0
+        effective["ставка"] = _engineering_rate(data, override_field, default_rate)
+        effective["нормативная ставка"] = default_rate
+        effective["примечание"] = note
+        effective["источник значения"] = "ручная корректировка" if manual else "оптимизированный норматив"
     if code == "3.1":
         effective["нормативная ставка"] = DESIGN_RATE
         if float(data.get("design_cost_override") or 0) > 0:
@@ -455,9 +522,32 @@ def _source_label(is_manual: bool, is_technology_adjusted: bool) -> str:
     return "норматив"
 
 
+def _engineering_rate(data: dict[str, Any], override_field: str, default_rate: float) -> float:
+    override = float(data.get(override_field) or 0)
+    return override if override > 0 else default_rate
+
+
+def _catalog_rate(code: str) -> float:
+    entry = next((item for item in RATE_CATALOG if str(item["код"]) == code), None)
+    return float(entry.get("ставка") or 0) if entry else 0.0
+
+
+def _detailed_cost_multiplier(data: dict[str, Any]) -> float:
+    return float(data.get("_detailed_cost_multiplier") or data.get("_estimated_cost_multiplier") or 1)
+
+
 def _foundation_amount(data: dict[str, Any]) -> float:
     total_area = float(data.get("total_area") or 0)
     foundation_type = _normalize(data.get("foundation_type"))
+    if foundation_type == "сваи" and not bool(data.get("has_underground_part")):
+        cost_override = float(data.get("pile_foundation_cost_override") or 0)
+        if cost_override > 0:
+            return round_money(cost_override)
+        pile_count = float(data.get("pile_count") or 0)
+        pile_unit_cost = float(data.get("pile_unit_cost") or 0)
+        if pile_count > 0 and pile_unit_cost > 0:
+            return round_money(pile_count * pile_unit_cost + total_area * float(data.get("grillage_rate_override") or 0))
+        return round_money(total_area * _foundation_rate(data))
     rates = {
         "сваи": 9_000,
         "плита": 8_500,
@@ -465,6 +555,39 @@ def _foundation_amount(data: dict[str, Any]) -> float:
         "подземнаячасть": 12_000,
     }
     return round_money(total_area * rates.get(foundation_type, 9_000))
+
+
+def _foundation_rate(data: dict[str, Any]) -> float:
+    total_area = float(data.get("total_area") or 0)
+    cost_override = float(data.get("pile_foundation_cost_override") or 0)
+    if cost_override > 0:
+        return round_money(cost_override / total_area) if total_area else 0.0
+    pile_count = float(data.get("pile_count") or 0)
+    pile_unit_cost = float(data.get("pile_unit_cost") or 0)
+    if pile_count > 0 and pile_unit_cost > 0:
+        amount = pile_count * pile_unit_cost + total_area * float(data.get("grillage_rate_override") or 0)
+        return round_money(amount / total_area) if total_area else 0.0
+    rate_override = float(data.get("pile_foundation_rate_override") or 0)
+    if rate_override > 0:
+        return rate_override
+    mode = _normalize(data.get("foundation_optimization_mode"))
+    return 6_500 if mode == "нормативный" else 5_500
+
+
+def _foundation_source(data: dict[str, Any]) -> str:
+    if float(data.get("pile_foundation_cost_override") or 0) > 0:
+        return "Ручная сумма свайного основания"
+    if float(data.get("pile_count") or 0) > 0 and float(data.get("pile_unit_cost") or 0) > 0:
+        return "Расчёт по количеству свай"
+    if float(data.get("pile_foundation_rate_override") or 0) > 0:
+        return "Ручная ставка свайного основания"
+    mode = _normalize(data.get("foundation_optimization_mode"))
+    return "Норматив свайного основания" if mode == "нормативный" else "Оптимизированный норматив свайного основания"
+
+
+def _foundation_manual_mode(data: dict[str, Any]) -> str | None:
+    source = _foundation_source(data)
+    return source if source.startswith(("Ручная", "Расчёт")) else None
 
 
 def _sellable_finish_amount(data: dict[str, Any]) -> float:
@@ -498,6 +621,7 @@ def _build_row(
         "Глава": entry["глава"],
         "Код": entry["код"],
         "Статья": entry["статья"],
+        "Источник бюджета": entry.get("источник"),
         "База": round_money(base_value),
         "Ед.": entry["единица"],
         "Ставка": rate,
@@ -535,7 +659,7 @@ def _base_value(base: str, data: dict[str, Any], budget: dict[str, Any], economi
     if base == "sellable_area":
         return float(data.get("sellable_area") or 0)
     if base == "cmr":
-        return float(budget.get("cmr") or 0)
+        return _calculate_cmr_core_total(data) or float(budget.get("cmr") or 0)
     if base == "revenue":
         return float(economics.get("revenue") or 0)
     return float(data.get("total_area") or 0)
@@ -559,7 +683,7 @@ def _chapter_totals(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return totals
 
 
-def _budget_adjustments(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _budget_adjustments(items: list[dict[str, Any]], data: dict[str, Any]) -> list[dict[str, Any]]:
     item_by_name = {row["Статья"]: row for row in items}
 
     def pick(*names: str) -> dict[str, Any]:
@@ -568,15 +692,54 @@ def _budget_adjustments(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 return item_by_name[name]
         return {"Статья": names[0], "Сумма": 0, "Ставка": 0, "Примечание": ""}
 
+    engineering_rows = [
+        pick("Сантехнические системы"),
+        pick("Отопление / ИТП / узел учета"),
+        pick("Электроснабжение"),
+        pick("Слаботочные системы"),
+        pick("Вентиляция / дымоудаление"),
+    ]
+    engineering_total = round_money(sum(float(row.get("Сумма") or 0) for row in engineering_rows))
+    cmr_total = round_money(sum(float(row["Сумма"]) for row in items if row.get("Источник бюджета") == "cmr"))
+    engineering_share = round(engineering_total / cmr_total, 4) if cmr_total else 0.0
+
     rows = [
-        pick("Устройство несущих конструкций надземной части"),
-        pick("Ограждающие конструкции / внутренние стены / кровля"),
-        pick("Проектирование"),
-        pick("Подготовительный период"),
+        {
+            "Статья": "Режим расчёта свай",
+            "Сумма": data.get("foundation_optimization_mode"),
+            "Ставка": "",
+            "Нормативная сумма": "",
+            "Разница к нормативу": "",
+            "Источник значения": _foundation_source(data),
+            "Примечание": "Используется для статьи «Свайное основание / ростверк».",
+        },
+        pick("Свайное основание / ростверк", "Фундаментная плита / свайное основание / ограждение котлована"),
         pick("Земляные работы"),
         pick("Устройство несущих конструкций подземной части"),
+        pick("Устройство несущих конструкций надземной части"),
+        pick("Ограждающие конструкции / внутренние стены / кровля"),
+        *engineering_rows,
+        {
+            "Статья": "Итог инженерных систем",
+            "Сумма": engineering_total,
+            "Ставка": "",
+            "Нормативная сумма": "",
+            "Разница к нормативу": "",
+            "Источник значения": "расчёт",
+            "Примечание": "Сумма статей 2.11–2.15.",
+        },
+        {
+            "Статья": "Доля инженерных систем в СМР",
+            "Сумма": engineering_share,
+            "Ставка": "",
+            "Нормативная сумма": "",
+            "Разница к нормативу": "",
+            "Источник значения": "расчёт",
+            "Примечание": "Итог инженерных систем / СМР.",
+        },
+        pick("Проектирование"),
+        pick("Подготовительный период"),
         pick("Отделка реализуемых площадей"),
-        pick("Свайное основание / ростверк", "Фундаментная плита / свайное основание / ограждение котлована"),
     ]
     return [
         {
@@ -598,6 +761,37 @@ def _sort_code(code: str) -> tuple[int, ...]:
 
 def _sum_items(item_amounts: dict[str, float], *names: str) -> float:
     return sum(item_amounts.get(name, 0.0) for name in names)
+
+
+def _source_totals_from_items(items: list[dict[str, Any]]) -> dict[str, float]:
+    totals: dict[str, float] = {}
+    for row in items:
+        source = str(row.get("Источник бюджета") or "")
+        totals[source] = totals.get(source, 0.0) + float(row.get("Сумма") or 0)
+    return {key: round_money(value) for key, value in totals.items()}
+
+
+def _summary_budget_items_from_detail(budget: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {"name": "Земля", "amount": budget["land"], "formula": "Детальный бюджет, глава 1", "source": "Детальный бюджет"},
+        {"name": "СМР", "amount": budget["cmr"], "formula": "Сумма детальных статей 2.1–2.15", "source": "Детальный бюджет"},
+        {"name": "Проектирование", "amount": budget["design"], "formula": "Детальная статья 3.1", "source": "Детальный бюджет"},
+        {"name": "Технический заказчик", "amount": budget["technical_customer"], "formula": "СМР × 2.5%", "source": "Детальный бюджет"},
+        {"name": "Генподряд", "amount": budget["general_contractor"], "formula": "СМР × 3%", "source": "Детальный бюджет"},
+        {"name": "Наружные сети", "amount": budget["external_networks"], "formula": "СМР × 7% или 0", "source": "Детальный бюджет"},
+        {"name": "Благоустройство", "amount": budget["landscaping"], "formula": "СМР × 2.5%", "source": "Детальный бюджет"},
+        {"name": "Резерв", "amount": budget["reserve"], "formula": "СМР × 5%", "source": "Детальный бюджет"},
+    ]
+
+
+def _engineering_total(items: list[dict[str, Any]]) -> float:
+    return round_money(
+        sum(float(row.get("Сумма") or 0) for row in items if str(row.get("Код")) in {"2.11", "2.12", "2.13", "2.14", "2.15"})
+    )
+
+
+def _item_by_code(items: list[dict[str, Any]], code: str) -> dict[str, Any]:
+    return next((row for row in items if str(row.get("Код")) == code), {})
 
 
 def _normalize(value: Any) -> str:

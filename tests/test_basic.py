@@ -23,6 +23,7 @@ def _model_with_market_gap() -> dict:
             total_area=10_000,
             sellable_area=7_800,
             floors=9,
+            above_ground_structures_rate_override=80_000,
         )
     )
 
@@ -237,10 +238,11 @@ def test_model_estimates_cost_without_manual_cmr_price() -> None:
     assert model["input"]["gp_contract_price_per_m2"] is None
     assert model["estimated_cmr_cost_per_m2"] > 0
     assert model["cmr_cost_source"] == "Расчётная себестоимость агента"
-    assert model["budget"]["construction_price_per_m2"] == model["estimated_cmr_cost_per_m2"]
+    assert model["budget"]["budget_source"] == "Детальный бюджет по статьям"
+    assert model["budget"]["construction_price_per_m2"] > 0
 
 
-def test_gp_contract_price_has_priority_over_estimated_cost() -> None:
+def test_detailed_budget_is_source_even_when_gp_price_is_present() -> None:
     model = build_financial_model(
         ProjectInput(
             project_name="Ручной генподряд",
@@ -251,8 +253,8 @@ def test_gp_contract_price_has_priority_over_estimated_cost() -> None:
         )
     )
     assert model["cmr_cost_source"] == "Ручная цена генподряда"
-    assert model["budget"]["construction_price_per_m2"] == 123_000
-    assert model["budget"]["cmr"] == pytest.approx(1_230_000_000)
+    assert model["budget"]["budget_source"] == "Детальный бюджет по статьям"
+    assert model["budget"]["total_budget"] == pytest.approx(model["detailed_budget"]["total_budget"], abs=0.05)
 
 
 def test_yakutsk_city_coefficient_is_applied() -> None:
@@ -328,7 +330,7 @@ def test_price_warning_when_target_margin_price_is_above_market() -> None:
             object_class="эконом",
             total_area=10_000,
             sellable_area=7_000,
-            gp_contract_price_per_m2=250_000,
+            above_ground_structures_rate_override=100_000,
         )
     )
     assert model["target_margin_price_per_m2"] > model["market_price_per_m2"]
@@ -665,5 +667,99 @@ def test_detailed_budget_total_matches_budget_after_key_rate_adjustments() -> No
         envelope_roof_walls_rate_override=7_000,
         design_cost_override=6_000_000,
     )
+    detail_sum = sum(row["Сумма"] for row in model["detailed_budget"]["items"])
+    assert detail_sum == pytest.approx(model["budget"]["total_budget"], abs=0.05)
+
+
+def test_optimized_pile_foundation_rate_for_piles_without_underground_is_5500() -> None:
+    model = _yakutsk_122_model()
+    item = _detail_item(model, "Свайное основание / ростверк")
+    assert item["Ставка"] == pytest.approx(5_500)
+    assert item["Сумма"] == pytest.approx(10_795.3 * 5_500, abs=1)
+
+
+def test_normative_pile_foundation_rate_is_6500() -> None:
+    model = _yakutsk_122_model(foundation_optimization_mode="нормативный")
+    item = _detail_item(model, "Свайное основание / ростверк")
+    assert item["Ставка"] == pytest.approx(6_500)
+    assert item["Сумма"] == pytest.approx(10_795.3 * 6_500, abs=1)
+
+
+def test_pile_foundation_cost_override_has_priority() -> None:
+    model = _yakutsk_122_model(pile_foundation_cost_override=42_000_000)
+    item = _detail_item(model, "Свайное основание / ростверк")
+    assert item["Сумма"] == pytest.approx(42_000_000, abs=1)
+    assert item["Источник значения"] == "Ручная сумма свайного основания"
+
+
+def test_pile_foundation_rate_override_has_priority_over_normative() -> None:
+    model = _yakutsk_122_model(pile_foundation_rate_override=4_800)
+    item = _detail_item(model, "Свайное основание / ростверк")
+    assert item["Ставка"] == pytest.approx(4_800)
+    assert item["Сумма"] == pytest.approx(10_795.3 * 4_800, abs=1)
+    assert item["Источник значения"] == "Ручная ставка свайного основания"
+
+
+def test_pile_count_and_unit_cost_calculation_works() -> None:
+    model = _yakutsk_122_model(pile_count=300, pile_unit_cost=120_000, grillage_rate_override=1_000)
+    item = _detail_item(model, "Свайное основание / ростверк")
+    expected = 300 * 120_000 + 10_795.3 * 1_000
+    assert item["Сумма"] == pytest.approx(expected, abs=1)
+    assert item["Источник значения"] == "Расчёт по количеству свай"
+
+
+def test_engineering_default_rates_are_optimized() -> None:
+    model = _yakutsk_122_model()
+    assert _detail_item(model, "Сантехнические системы")["Ставка"] == pytest.approx(4_200)
+    assert _detail_item(model, "Отопление / ИТП / узел учета")["Ставка"] == pytest.approx(5_200)
+    assert _detail_item(model, "Электроснабжение")["Ставка"] == pytest.approx(4_600)
+    assert _detail_item(model, "Слаботочные системы")["Ставка"] == pytest.approx(1_500)
+    assert _detail_item(model, "Вентиляция / дымоудаление")["Ставка"] == pytest.approx(2_500)
+
+
+def test_engineering_manual_overrides_have_priority() -> None:
+    model = _yakutsk_122_model(
+        plumbing_rate_override=3_900,
+        heating_rate_override=4_900,
+        electrical_rate_override=4_100,
+        low_voltage_rate_override=1_200,
+        ventilation_rate_override=2_100,
+    )
+    assert _detail_item(model, "Сантехнические системы")["Ставка"] == pytest.approx(3_900)
+    assert _detail_item(model, "Отопление / ИТП / узел учета")["Ставка"] == pytest.approx(4_900)
+    assert _detail_item(model, "Электроснабжение")["Ставка"] == pytest.approx(4_100)
+    assert _detail_item(model, "Слаботочные системы")["Ставка"] == pytest.approx(1_200)
+    assert _detail_item(model, "Вентиляция / дымоудаление")["Ставка"] == pytest.approx(2_100)
+
+
+def test_lower_pile_foundation_cost_lowers_total_budget_without_redistribution() -> None:
+    base = _yakutsk_122_model()
+    optimized_engineering = [
+        _detail_item(base, name)["Сумма"]
+        for name in (
+            "Сантехнические системы",
+            "Отопление / ИТП / узел учета",
+            "Электроснабжение",
+            "Слаботочные системы",
+            "Вентиляция / дымоудаление",
+        )
+    ]
+    lowered = _yakutsk_122_model(pile_foundation_cost_override=40_000_000)
+    lowered_engineering = [
+        _detail_item(lowered, name)["Сумма"]
+        for name in (
+            "Сантехнические системы",
+            "Отопление / ИТП / узел учета",
+            "Электроснабжение",
+            "Слаботочные системы",
+            "Вентиляция / дымоудаление",
+        )
+    ]
+    assert lowered["budget"]["total_budget"] < base["budget"]["total_budget"]
+    assert lowered_engineering == pytest.approx(optimized_engineering)
+
+
+def test_detailed_budget_sum_is_the_model_total_budget() -> None:
+    model = _yakutsk_122_model(pile_foundation_cost_override=40_000_000, plumbing_rate_override=3_900)
     detail_sum = sum(row["Сумма"] for row in model["detailed_budget"]["items"])
     assert detail_sum == pytest.approx(model["budget"]["total_budget"], abs=0.05)

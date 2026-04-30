@@ -72,6 +72,22 @@ with st.form("model_form"):
         design_cost_override = st.number_input("Проектирование, ₽ — можно оставить пустым", min_value=0.0, value=0.0, step=1_000_000.0)
         preparation_cost_override = st.number_input("Подготовительные работы, ₽ — можно оставить пустым", min_value=0.0, value=0.0, step=1_000_000.0)
         earthworks_rate_override = st.number_input("Земляные работы, ₽/м² — можно оставить пустым", min_value=0.0, value=0.0, step=100.0)
+        st.markdown("**Ручные корректировки свайного основания**")
+        st.caption("Если поле пустое или 0, агент использует оптимизированный норматив. Если заполнено — ручное значение имеет приоритет.")
+        foundation_optimization_mode = st.selectbox("Режим расчёта свайного основания", ["оптимизированный", "нормативный"])
+        pile_foundation_rate_override = st.number_input("Ставка свайного основания, ₽/м²", min_value=0.0, value=0.0, step=500.0)
+        pile_foundation_cost_override = st.number_input("Сумма свайного основания, ₽", min_value=0.0, value=0.0, step=1_000_000.0)
+        pile_count = st.number_input("Количество свай", min_value=0, value=0, step=1)
+        average_pile_depth = st.number_input("Средняя глубина сваи, м", min_value=0.0, value=0.0, step=1.0)
+        pile_unit_cost = st.number_input("Стоимость одной сваи, ₽", min_value=0.0, value=0.0, step=10_000.0)
+        grillage_rate_override = st.number_input("Ростверк / оголовки, ₽/м²", min_value=0.0, value=0.0, step=500.0)
+        st.markdown("**Ручные корректировки инженерных систем**")
+        st.caption("Если поле пустое или 0, агент использует оптимизированный норматив. Если заполнено — ручное значение имеет приоритет.")
+        plumbing_rate_override = st.number_input("Сантехнические системы, ₽/м²", min_value=0.0, value=0.0, step=500.0)
+        heating_rate_override = st.number_input("Отопление / ИТП, ₽/м²", min_value=0.0, value=0.0, step=500.0)
+        electrical_rate_override = st.number_input("Электроснабжение, ₽/м²", min_value=0.0, value=0.0, step=500.0)
+        low_voltage_rate_override = st.number_input("Слаботочные системы, ₽/м²", min_value=0.0, value=0.0, step=250.0)
+        ventilation_rate_override = st.number_input("Вентиляция / дымоудаление, ₽/м²", min_value=0.0, value=0.0, step=250.0)
         budget_format = st.selectbox("Формат бюджета", ["Укрупнённый", "Детальный по статьям"])
 
     submitted = st.form_submit_button("Сформировать финансовую модель")
@@ -104,6 +120,18 @@ if submitted:
         design_cost_override=_optional_number(design_cost_override),
         preparation_cost_override=_optional_number(preparation_cost_override),
         earthworks_rate_override=_optional_number(earthworks_rate_override),
+        pile_foundation_rate_override=_optional_number(pile_foundation_rate_override),
+        pile_foundation_cost_override=_optional_number(pile_foundation_cost_override),
+        pile_count=int(pile_count) if pile_count else None,
+        average_pile_depth=_optional_number(average_pile_depth),
+        pile_unit_cost=_optional_number(pile_unit_cost),
+        grillage_rate_override=_optional_number(grillage_rate_override),
+        foundation_optimization_mode=foundation_optimization_mode,
+        plumbing_rate_override=_optional_number(plumbing_rate_override),
+        heating_rate_override=_optional_number(heating_rate_override),
+        electrical_rate_override=_optional_number(electrical_rate_override),
+        low_voltage_rate_override=_optional_number(low_voltage_rate_override),
+        ventilation_rate_override=_optional_number(ventilation_rate_override),
     )
     model = build_financial_model(project_input)
     excel_path = export_model_to_excel(model, OUTPUT_DIR)

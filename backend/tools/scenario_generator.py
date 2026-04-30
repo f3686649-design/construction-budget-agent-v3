@@ -7,6 +7,7 @@ from typing import Any
 from backend.tools.budget_generator import generate_budget
 from backend.tools.cashflow_model import build_operations, generate_cashflow
 from backend.tools.credit_model import generate_credit_schedule
+from backend.tools.detailed_budget_generator import apply_detailed_budget_to_budget, generate_detailed_budget
 from backend.tools.dscr_model import calculate_dscr
 from backend.tools.gpr_generator import generate_gpr
 from backend.tools.norms import round_money
@@ -37,6 +38,7 @@ def _stress_data(base_data: dict[str, Any]) -> dict[str, Any]:
     data = deepcopy(base_data)
     data["sale_price_per_m2"] = float(data["sale_price_per_m2"]) * 0.90
     data["sales_months"] = max(1, int(math.ceil(float(data["sales_months"]) * 1.20)))
+    data["_detailed_cost_multiplier"] = 1.07
     if data.get("gp_contract_price_per_m2"):
         data["gp_contract_price_per_m2"] = float(data["gp_contract_price_per_m2"]) * 1.07
     elif data.get("construction_cost_per_m2"):
@@ -50,6 +52,9 @@ def _stress_data(base_data: dict[str, Any]) -> dict[str, Any]:
 def _calculate_scenario(code: str, name: str, data: dict[str, Any]) -> dict[str, Any]:
     budget = generate_budget(data)
     budget.pop("trace", None)
+    detailed_budget = generate_detailed_budget(data, budget, {})
+    detailed_budget.pop("trace", None)
+    budget = apply_detailed_budget_to_budget(data, budget, detailed_budget)
     gpr = generate_gpr(
         total_budget=float(budget["total_budget"]),
         land_cost=float(budget["land"]),

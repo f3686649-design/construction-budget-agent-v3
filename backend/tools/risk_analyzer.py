@@ -10,6 +10,15 @@ ENVELOPE_NORMATIVE_RATE = 11_560
 EARTHWORKS_PILE_NO_UNDERGROUND_RATE = 800
 EARTHWORKS_UNDERGROUND_RATE = 3_000
 EARTHWORKS_BASE_RATE = 1_800
+PILE_OPTIMIZED_RATE = 5_500
+PILE_HIGH_RATE = 8_000
+ENGINEERING_NORMATIVE_RATES = {
+    "plumbing_rate_override": 4_200,
+    "heating_rate_override": 5_200,
+    "electrical_rate_override": 4_600,
+    "low_voltage_rate_override": 1_500,
+    "ventilation_rate_override": 2_500,
+}
 
 
 def _risk(code: str, level: str, title: str, description: str, recommendation: str) -> dict[str, str]:
@@ -40,8 +49,61 @@ def analyze_risks(
     recommended_price = float(economics.get("recommended_price_per_m2") or 0)
     market_price = float(economics.get("market_price_per_m2") or 0)
     break_even_price = float(economics.get("break_even_price_per_m2") or 0)
+    pile_rate = float(data.get("pile_foundation_rate") or 0)
+    engineering_share = float(data.get("engineering_systems_share_of_cmr") or 0)
+    is_pile_foundation = str(data.get("foundation_type") or "").lower().replace("ё", "е").replace(" ", "") == "сваи"
 
     risks.extend(_manual_rate_risks(data))
+    if is_pile_foundation and pile_rate and pile_rate < 5_000:
+        risks.append(
+            _risk(
+                "low_pile_foundation_rate",
+                "medium",
+                "Ставка свайного основания ниже ориентира",
+                "Ставка свайного основания ниже оптимизированного ориентира. Нужно подтвердить расчётом фундамента или КП подрядчика.",
+                "Получить расчёт фундамента, геологическое обоснование и КП подрядчика на свайное поле.",
+            )
+        )
+    if is_pile_foundation and pile_rate > PILE_HIGH_RATE:
+        risks.append(
+            _risk(
+                "high_pile_foundation_rate",
+                "medium",
+                "Дорогое свайное основание",
+                "Свайное основание выглядит дорогим для объекта без подземной части. Проверьте геологию, длину свай и состав работ.",
+                "Проверить инженерно-геологические изыскания, длину свай, шаг свай и состав работ подрядчика.",
+            )
+        )
+    if not bool(data.get("has_underground_part")) and float(data.get("underground_part_amount") or 0) > 0:
+        risks.append(
+            _risk(
+                "underground_cost_without_underground_part",
+                "high",
+                "Затраты на подземный конструктив при отсутствии подземной части",
+                "Подземная часть отсутствует, но в бюджете есть затраты на подземный конструктив.",
+                "Обнулить статью подземной части или подтвердить, какие работы фактически относятся к подземному конструктиву.",
+            )
+        )
+    if engineering_share > 0.30:
+        risks.append(
+            _risk(
+                "engineering_share_above_30",
+                "high",
+                "Высокая доля инженерных систем",
+                "Инженерные системы занимают более 30% СМР.",
+                "Проверить ставки 2.11–2.15, состав инженерии, оборудование и исключения из генподряда.",
+            )
+        )
+    elif engineering_share > 0.25:
+        risks.append(
+            _risk(
+                "engineering_share_above_25",
+                "medium",
+                "Повышенная доля инженерных систем",
+                "Инженерные системы занимают более 25% СМР. Проверьте ставки и состав инженерии.",
+                "Сверить инженерные ставки с КП подрядчиков и техническими условиями.",
+            )
+        )
 
     if sellable_ratio < 0.65:
         risks.append(
@@ -242,6 +304,12 @@ def _manual_rate_risks(data: dict[str, Any]) -> list[dict[str, str]]:
     risks: list[dict[str, str]] = []
     checks = (
         (
+            "manual_pile_foundation_rate_low",
+            "Ставка свайного основания снижена",
+            _manual_pile_rate(data),
+            PILE_OPTIMIZED_RATE,
+        ),
+        (
             "manual_above_ground_structures_rate_low",
             "Ставка надземных несущих конструкций снижена",
             float(data.get("above_ground_structures_rate_override") or 0),
@@ -258,6 +326,21 @@ def _manual_rate_risks(data: dict[str, Any]) -> list[dict[str, str]]:
             "Ставка земляных работ снижена",
             float(data.get("earthworks_rate_override") or 0),
             _earthworks_normative_rate(data),
+        ),
+        *(
+            (
+                f"manual_{field}_low",
+                title,
+                float(data.get(field) or 0),
+                normative,
+            )
+            for field, normative, title in (
+                ("plumbing_rate_override", ENGINEERING_NORMATIVE_RATES["plumbing_rate_override"], "Ставка сантехнических систем снижена"),
+                ("heating_rate_override", ENGINEERING_NORMATIVE_RATES["heating_rate_override"], "Ставка отопления / ИТП снижена"),
+                ("electrical_rate_override", ENGINEERING_NORMATIVE_RATES["electrical_rate_override"], "Ставка электроснабжения снижена"),
+                ("low_voltage_rate_override", ENGINEERING_NORMATIVE_RATES["low_voltage_rate_override"], "Ставка слаботочных систем снижена"),
+                ("ventilation_rate_override", ENGINEERING_NORMATIVE_RATES["ventilation_rate_override"], "Ставка вентиляции / дымоудаления снижена"),
+            )
         ),
     )
     for code, title, manual_rate, normative_rate in checks:
@@ -281,3 +364,12 @@ def _earthworks_normative_rate(data: dict[str, Any]) -> float:
     if bool(data.get("has_underground_part")):
         return EARTHWORKS_UNDERGROUND_RATE
     return EARTHWORKS_BASE_RATE
+
+
+def _manual_pile_rate(data: dict[str, Any]) -> float:
+    total_area = float(data.get("total_area") or 0)
+    if float(data.get("pile_foundation_cost_override") or 0) > 0:
+        return float(data["pile_foundation_cost_override"]) / total_area if total_area else 0
+    if float(data.get("pile_foundation_rate_override") or 0) > 0:
+        return float(data["pile_foundation_rate_override"])
+    return 0.0

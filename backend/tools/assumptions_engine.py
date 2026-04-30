@@ -52,6 +52,7 @@ def apply_assumptions(project_input: ProjectInput) -> dict[str, Any]:
     set_default("foundation_type", "сваи", "Тип фундамента не указан.")
     set_default("has_underground_part", False, "Признак подземной части не указан.")
     set_default("sellable_finish_level", "черновая", "Уровень отделки реализуемых помещений не указан.")
+    set_default("foundation_optimization_mode", "оптимизированный", "Режим расчёта свайного основания не указан.")
 
     if data.get("sellable_area") in (None, ""):
         data["sellable_area"] = data["total_area"] * DEFAULT_ASSUMPTIONS["sellable_area_ratio"]
@@ -136,6 +137,22 @@ def apply_assumptions(project_input: ProjectInput) -> dict[str, Any]:
     envelope_override = float(data.get("envelope_roof_walls_rate_override") or 0)
     earthworks_override = float(data.get("earthworks_rate_override") or 0)
     object_class = str(data.get("object_class") or "").lower().replace("ё", "е")
+    assumptions.extend(
+        [
+            {
+                "field": "foundation_type",
+                "value": data.get("foundation_type"),
+                "reason": "Тип фундамента используется для расчёта свай, земляных работ и подземной части.",
+                "source": "developer_assumption",
+            },
+            {
+                "field": "foundation_optimization_mode",
+                "value": data.get("foundation_optimization_mode"),
+                "reason": "Режим расчёта свайного основания определяет ставку 5 500 или 6 500 ₽/м².",
+                "source": "developer_assumption",
+            },
+        ]
+    )
 
     if above_ground_override > 0:
         above_ground_rate = above_ground_override
@@ -209,6 +226,44 @@ def apply_assumptions(project_input: ProjectInput) -> dict[str, Any]:
         }
     )
 
+    pile_rate = _pile_foundation_rate(data)
+    data["pile_foundation_rate"] = pile_rate
+    assumptions.append(
+        {
+            "field": "pile_foundation_rate",
+            "value": pile_rate,
+            "reason": "Ставка свайного основания рассчитана по выбранному режиму или ручной корректировке.",
+            "source": "user_input"
+            if any(float(data.get(field) or 0) > 0 for field in ("pile_foundation_rate_override", "pile_foundation_cost_override", "pile_count", "pile_unit_cost"))
+            else "developer_norm",
+        }
+    )
+    for field, label, rate in (
+        ("plumbing_rate", "Ставка 2.11 сантехнических систем", _engineering_rate(data, "plumbing_rate_override", 4_200)),
+        ("heating_rate", "Ставка 2.12 отопления / ИТП", _engineering_rate(data, "heating_rate_override", 5_200)),
+        ("electrical_rate", "Ставка 2.13 электроснабжения", _engineering_rate(data, "electrical_rate_override", 4_600)),
+        ("low_voltage_rate", "Ставка 2.14 слаботочных систем", _engineering_rate(data, "low_voltage_rate_override", 1_500)),
+        ("ventilation_rate", "Ставка 2.15 вентиляции / дымоудаления", _engineering_rate(data, "ventilation_rate_override", 2_500)),
+    ):
+        data[field] = rate
+        assumptions.append(
+            {
+                "field": field,
+                "value": rate,
+                "reason": f"{label}: используется ручная ставка или оптимизированный норматив модели.",
+                "source": "user_input" if _override_source_field(field, data) else "developer_norm",
+            }
+        )
+    if not has_underground_part:
+        assumptions.append(
+            {
+                "field": "pit_fencing_excluded",
+                "value": "Исключено",
+                "reason": "Ограждение котлована исключено: подземная часть не предусмотрена.",
+                "source": "developer_norm",
+            }
+        )
+
     if foundation_type == "сваи" and not has_underground_part:
         assumptions.extend(
             [
@@ -243,3 +298,34 @@ def apply_assumptions(project_input: ProjectInput) -> dict[str, Any]:
         }
     )
     return {"data": data, "assumptions": assumptions, "trace": trace}
+
+
+def _pile_foundation_rate(data: dict[str, Any]) -> float:
+    if float(data.get("pile_foundation_cost_override") or 0) > 0:
+        total_area = float(data.get("total_area") or 0)
+        return round_money(float(data["pile_foundation_cost_override"]) / total_area) if total_area else 0
+    if float(data.get("pile_count") or 0) > 0 and float(data.get("pile_unit_cost") or 0) > 0:
+        total_area = float(data.get("total_area") or 0)
+        base = float(data["pile_count"]) * float(data["pile_unit_cost"])
+        base += total_area * float(data.get("grillage_rate_override") or 0)
+        return round_money(base / total_area) if total_area else 0
+    if float(data.get("pile_foundation_rate_override") or 0) > 0:
+        return float(data["pile_foundation_rate_override"])
+    mode = str(data.get("foundation_optimization_mode") or "оптимизированный").lower().replace("ё", "е")
+    return 6_500 if mode == "нормативный" else 5_500
+
+
+def _engineering_rate(data: dict[str, Any], override_field: str, default_rate: float) -> float:
+    override = float(data.get(override_field) or 0)
+    return override if override > 0 else default_rate
+
+
+def _override_source_field(field: str, data: dict[str, Any]) -> bool:
+    mapping = {
+        "plumbing_rate": "plumbing_rate_override",
+        "heating_rate": "heating_rate_override",
+        "electrical_rate": "electrical_rate_override",
+        "low_voltage_rate": "low_voltage_rate_override",
+        "ventilation_rate": "ventilation_rate_override",
+    }
+    return float(data.get(mapping[field]) or 0) > 0

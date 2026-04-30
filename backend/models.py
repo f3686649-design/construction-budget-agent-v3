@@ -34,6 +34,18 @@ class ProjectInput(BaseModel):
     design_cost_override: float | None = Field(default=None, ge=0)
     preparation_cost_override: float | None = Field(default=None, ge=0)
     earthworks_rate_override: float | None = Field(default=None, ge=0)
+    pile_foundation_rate_override: float | None = Field(default=None, ge=0)
+    pile_foundation_cost_override: float | None = Field(default=None, ge=0)
+    pile_count: int | None = Field(default=None, ge=0)
+    average_pile_depth: float | None = Field(default=None, ge=0)
+    pile_unit_cost: float | None = Field(default=None, ge=0)
+    grillage_rate_override: float | None = Field(default=None, ge=0)
+    foundation_optimization_mode: str | None = Field(default=None)
+    plumbing_rate_override: float | None = Field(default=None, ge=0)
+    heating_rate_override: float | None = Field(default=None, ge=0)
+    electrical_rate_override: float | None = Field(default=None, ge=0)
+    low_voltage_rate_override: float | None = Field(default=None, ge=0)
+    ventilation_rate_override: float | None = Field(default=None, ge=0)
 
     @field_validator("credit_share", "credit_rate")
     @classmethod
