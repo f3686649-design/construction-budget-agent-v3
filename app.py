@@ -55,8 +55,23 @@ with st.form("model_form"):
         foundation_type = st.selectbox("Тип фундамента", ["сваи", "плита", "лента", "подземная часть"])
         has_underground_part = st.selectbox("Есть подземная часть?", ["нет", "да"]) == "да"
         sellable_finish_level = st.selectbox("Отделка реализуемых помещений", ["черновая", "без отделки", "white box", "чистовая"])
+        st.markdown("**Ручные корректировки ключевых статей бюджета**")
+        st.caption("Если поле пустое или 0, агент использует норматив. Если заполнено — ручное значение имеет приоритет.")
+        above_ground_structures_rate_override = st.number_input(
+            "Ставка надземных несущих конструкций, ₽/м² — можно оставить пустым",
+            min_value=0.0,
+            value=0.0,
+            step=500.0,
+        )
+        envelope_roof_walls_rate_override = st.number_input(
+            "Ставка ограждающих конструкций / стен / кровли, ₽/м² — можно оставить пустым",
+            min_value=0.0,
+            value=0.0,
+            step=500.0,
+        )
         design_cost_override = st.number_input("Проектирование, ₽ — можно оставить пустым", min_value=0.0, value=0.0, step=1_000_000.0)
         preparation_cost_override = st.number_input("Подготовительные работы, ₽ — можно оставить пустым", min_value=0.0, value=0.0, step=1_000_000.0)
+        earthworks_rate_override = st.number_input("Земляные работы, ₽/м² — можно оставить пустым", min_value=0.0, value=0.0, step=100.0)
         budget_format = st.selectbox("Формат бюджета", ["Укрупнённый", "Детальный по статьям"])
 
     submitted = st.form_submit_button("Сформировать финансовую модель")
@@ -84,8 +99,11 @@ if submitted:
         foundation_type=foundation_type,
         has_underground_part=has_underground_part,
         sellable_finish_level=sellable_finish_level,
+        above_ground_structures_rate_override=_optional_number(above_ground_structures_rate_override),
+        envelope_roof_walls_rate_override=_optional_number(envelope_roof_walls_rate_override),
         design_cost_override=_optional_number(design_cost_override),
         preparation_cost_override=_optional_number(preparation_cost_override),
+        earthworks_rate_override=_optional_number(earthworks_rate_override),
     )
     model = build_financial_model(project_input)
     excel_path = export_model_to_excel(model, OUTPUT_DIR)

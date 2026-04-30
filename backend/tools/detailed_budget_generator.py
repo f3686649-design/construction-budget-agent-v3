@@ -8,6 +8,16 @@ from backend.tools.rate_catalog import RATE_CATALOG
 
 
 START_DATE = date(2026, 1, 1)
+ABOVE_GROUND_NORMATIVE_RATE = 23_120
+ABOVE_GROUND_PILE_NO_UNDERGROUND_RATE = 19_500
+ENVELOPE_NORMATIVE_RATE = 11_560
+ENVELOPE_ECONOMY_COMFORT_RATE = 8_500
+EARTHWORKS_PILE_NO_UNDERGROUND_RATE = 800
+EARTHWORKS_UNDERGROUND_RATE = 3_000
+EARTHWORKS_BASE_RATE = 1_800
+DESIGN_RATE = 1_500
+DESIGN_CAP_AREA = 12_000
+DESIGN_CAP_AMOUNT = 10_000_000
 
 
 def generate_detailed_budget(data: dict[str, Any], budget: dict[str, Any], economics: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -296,6 +306,8 @@ def _amounts_for_source(source: str, entries: list[dict[str, Any]], total: float
         "2.1": _preparation_amount(data),
         "2.2": _earthworks_amount(data),
         "2.3": _foundation_amount(data),
+        "2.5": _above_ground_structures_amount(data),
+        "2.6": _envelope_roof_walls_amount(data),
         "2.8": _sellable_finish_amount(data),
     }
     if not bool(data.get("has_underground_part")):
@@ -324,17 +336,65 @@ def _effective_entry(entry: dict[str, Any], data: dict[str, Any]) -> dict[str, A
     foundation_type = _normalize(data.get("foundation_type"))
     has_underground = bool(data.get("has_underground_part"))
     finish_level = _normalize(data.get("sellable_finish_level"))
-    if code == "2.2" and foundation_type == "сваи" and not has_underground:
-        effective["примечание"] = "Сниженный объём земляных работ: свайный фундамент, подземная часть отсутствует."
-        effective["ставка"] = 800
+    object_class = _normalize(data.get("object_class"))
+    if code == "2.1":
+        effective["нормативная ставка"] = 750
+        effective["источник значения"] = "ручная корректировка" if float(data.get("preparation_cost_override") or 0) > 0 else "норматив"
+        if float(data.get("preparation_cost_override") or 0) > 0:
+            effective["примечание"] = "Ручная сумма подготовительных работ имеет приоритет над нормативом 750 ₽/м²."
+    if code == "2.2":
+        earthworks_rate = _earthworks_rate(data)
+        effective["ставка"] = earthworks_rate
+        effective["нормативная ставка"] = EARTHWORKS_UNDERGROUND_RATE if has_underground else EARTHWORKS_BASE_RATE
+        effective["источник значения"] = _source_label(
+            float(data.get("earthworks_rate_override") or 0) > 0,
+            foundation_type == "сваи" and not has_underground,
+        )
+        if float(data.get("earthworks_rate_override") or 0) > 0:
+            effective["примечание"] = "Ручная ставка земляных работ имеет приоритет над нормативом."
+        elif foundation_type == "сваи" and not has_underground:
+            effective["примечание"] = "Сниженный объём земляных работ: свайный фундамент, подземная часть отсутствует."
     if code == "2.3" and foundation_type == "сваи":
         effective["статья"] = "Свайное основание / ростверк"
         effective["примечание"] = "Свайный фундамент рассчитан отдельной статьёй, без смешения со стоимостью подземной части."
+        effective["источник значения"] = "технологическая корректировка"
     if code == "2.4" and not has_underground:
         effective["примечание"] = "Не предусмотрено: подземная часть отсутствует."
+        effective["источник значения"] = "технологическая корректировка"
+    if code == "2.5":
+        manual = float(data.get("above_ground_structures_rate_override") or 0) > 0
+        technology_adjusted = foundation_type == "сваи" and not has_underground
+        effective["ставка"] = _above_ground_structures_rate(data)
+        effective["нормативная ставка"] = ABOVE_GROUND_NORMATIVE_RATE
+        effective["источник значения"] = _source_label(manual, technology_adjusted)
+        if manual:
+            effective["примечание"] = "Ручная ставка надземных несущих конструкций имеет приоритет над нормативом."
+        elif technology_adjusted:
+            effective["примечание"] = "Скорректировано: типовой надземный конструктив для объекта на сваях без подземной части."
+    if code == "2.6":
+        manual = float(data.get("envelope_roof_walls_rate_override") or 0) > 0
+        technology_adjusted = object_class in {"эконом", "economy", "комфорт", "comfort"}
+        effective["ставка"] = _envelope_roof_walls_rate(data)
+        effective["нормативная ставка"] = ENVELOPE_NORMATIVE_RATE
+        effective["источник значения"] = _source_label(manual, technology_adjusted)
+        if manual:
+            effective["примечание"] = "Ручная ставка ограждающих конструкций / стен / кровли имеет приоритет над нормативом."
+        elif technology_adjusted:
+            effective["примечание"] = "Скорректировано: эконом/комфорт класс, без повышенной отделки ограждающих конструкций."
     if code == "2.8":
         effective["ставка"] = _finish_rate(finish_level)
         effective["примечание"] = f"Отделка реализуемых помещений: {data.get('sellable_finish_level') or 'черновая'}."
+        effective["источник значения"] = "технологическая корректировка"
+    if code == "3.1":
+        effective["нормативная ставка"] = DESIGN_RATE
+        if float(data.get("design_cost_override") or 0) > 0:
+            effective["источник значения"] = "ручная корректировка"
+            effective["примечание"] = "Ручная сумма проектирования имеет приоритет над нормативным расчётом."
+        elif float(data.get("total_area") or 0) <= DESIGN_CAP_AREA:
+            effective["источник значения"] = "технологическая корректировка"
+            effective["примечание"] = "Проектирование ограничено ориентиром 10 млн ₽ для объекта до 12 000 м²."
+        else:
+            effective["источник значения"] = "норматив"
     return effective
 
 
@@ -347,11 +407,52 @@ def _preparation_amount(data: dict[str, Any]) -> float:
 
 def _earthworks_amount(data: dict[str, Any]) -> float:
     total_area = float(data.get("total_area") or 0)
+    return round_money(total_area * _earthworks_rate(data))
+
+
+def _earthworks_rate(data: dict[str, Any]) -> float:
+    override = float(data.get("earthworks_rate_override") or 0)
+    if override > 0:
+        return override
     if _normalize(data.get("foundation_type")) == "сваи" and not bool(data.get("has_underground_part")):
-        return round_money(total_area * 800)
+        return EARTHWORKS_PILE_NO_UNDERGROUND_RATE
     if bool(data.get("has_underground_part")):
-        return round_money(total_area * 3_000)
-    return round_money(total_area * 1_800)
+        return EARTHWORKS_UNDERGROUND_RATE
+    return EARTHWORKS_BASE_RATE
+
+
+def _above_ground_structures_amount(data: dict[str, Any]) -> float:
+    return round_money(float(data.get("total_area") or 0) * _above_ground_structures_rate(data))
+
+
+def _above_ground_structures_rate(data: dict[str, Any]) -> float:
+    override = float(data.get("above_ground_structures_rate_override") or 0)
+    if override > 0:
+        return override
+    if _normalize(data.get("foundation_type")) == "сваи" and not bool(data.get("has_underground_part")):
+        return ABOVE_GROUND_PILE_NO_UNDERGROUND_RATE
+    return ABOVE_GROUND_NORMATIVE_RATE
+
+
+def _envelope_roof_walls_amount(data: dict[str, Any]) -> float:
+    return round_money(float(data.get("total_area") or 0) * _envelope_roof_walls_rate(data))
+
+
+def _envelope_roof_walls_rate(data: dict[str, Any]) -> float:
+    override = float(data.get("envelope_roof_walls_rate_override") or 0)
+    if override > 0:
+        return override
+    if _normalize(data.get("object_class")) in {"эконом", "economy", "комфорт", "comfort"}:
+        return ENVELOPE_ECONOMY_COMFORT_RATE
+    return ENVELOPE_NORMATIVE_RATE
+
+
+def _source_label(is_manual: bool, is_technology_adjusted: bool) -> str:
+    if is_manual:
+        return "ручная корректировка"
+    if is_technology_adjusted:
+        return "технологическая корректировка"
+    return "норматив"
 
 
 def _foundation_amount(data: dict[str, Any]) -> float:
@@ -391,6 +492,8 @@ def _build_row(
     base_value = _base_value(str(entry["база"]), data, budget, economics)
     coefficient = float(entry.get("коэффициент") or 1)
     rate = round_money(amount / base_value / coefficient) if base_value and coefficient else 0.0
+    normative_rate = float(entry.get("нормативная ставка") or entry.get("ставка") or 0)
+    normative_amount = round_money(base_value * normative_rate * coefficient) if base_value and normative_rate else 0.0
     row = {
         "Глава": entry["глава"],
         "Код": entry["код"],
@@ -400,6 +503,10 @@ def _build_row(
         "Ставка": rate,
         "Коэфф.": coefficient,
         "Сумма": round_money(amount),
+        "Нормативная ставка": round_money(normative_rate),
+        "Нормативная сумма": normative_amount,
+        "Разница к нормативу": round_money(amount - normative_amount) if normative_amount else 0.0,
+        "Источник значения": entry.get("источник значения", "норматив"),
         "Примечание": entry["примечание"],
         "Материалы, %": round(float(entry["доля материалов"]) * 100, 2),
         "Работы, %": round(float(entry["доля работ"]) * 100, 2),
@@ -462,6 +569,8 @@ def _budget_adjustments(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return {"Статья": names[0], "Сумма": 0, "Ставка": 0, "Примечание": ""}
 
     rows = [
+        pick("Устройство несущих конструкций надземной части"),
+        pick("Ограждающие конструкции / внутренние стены / кровля"),
         pick("Проектирование"),
         pick("Подготовительный период"),
         pick("Земляные работы"),
@@ -474,6 +583,9 @@ def _budget_adjustments(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "Статья": row["Статья"],
             "Сумма": row["Сумма"],
             "Ставка": row["Ставка"],
+            "Нормативная сумма": row.get("Нормативная сумма", 0),
+            "Разница к нормативу": row.get("Разница к нормативу", 0),
+            "Источник значения": row.get("Источник значения", "норматив"),
             "Комментарий": row["Примечание"],
         }
         for row in rows

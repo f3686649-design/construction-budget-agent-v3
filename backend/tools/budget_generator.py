@@ -63,7 +63,7 @@ def generate_budget(data: dict[str, Any]) -> dict[str, Any]:
             "formula": (
                 "Ручная сумма проектирования"
                 if float(data.get("design_cost_override") or 0) > 0
-                else "Общая площадь × 1 500 ₽/м², с ограничением до 10 млн ₽ для объектов до 10 000 м²"
+                else "Общая площадь × 1 500 ₽/м², с ограничением 10 млн ₽ для объектов до 12 000 м²"
             ),
             "source": "Ввод пользователя" if float(data.get("design_cost_override") or 0) > 0 else "Норматив модели",
         },

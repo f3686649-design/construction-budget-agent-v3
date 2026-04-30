@@ -5,6 +5,13 @@ from typing import Any
 from backend.tools.norms import RISK_THRESHOLDS
 
 
+ABOVE_GROUND_NORMATIVE_RATE = 23_120
+ENVELOPE_NORMATIVE_RATE = 11_560
+EARTHWORKS_PILE_NO_UNDERGROUND_RATE = 800
+EARTHWORKS_UNDERGROUND_RATE = 3_000
+EARTHWORKS_BASE_RATE = 1_800
+
+
 def _risk(code: str, level: str, title: str, description: str, recommendation: str) -> dict[str, str]:
     return {
         "code": code,
@@ -33,6 +40,8 @@ def analyze_risks(
     recommended_price = float(economics.get("recommended_price_per_m2") or 0)
     market_price = float(economics.get("market_price_per_m2") or 0)
     break_even_price = float(economics.get("break_even_price_per_m2") or 0)
+
+    risks.extend(_manual_rate_risks(data))
 
     if sellable_ratio < 0.65:
         risks.append(
@@ -227,3 +236,48 @@ def analyze_risks(
             )
         )
     return risks
+
+
+def _manual_rate_risks(data: dict[str, Any]) -> list[dict[str, str]]:
+    risks: list[dict[str, str]] = []
+    checks = (
+        (
+            "manual_above_ground_structures_rate_low",
+            "Ставка надземных несущих конструкций снижена",
+            float(data.get("above_ground_structures_rate_override") or 0),
+            ABOVE_GROUND_NORMATIVE_RATE,
+        ),
+        (
+            "manual_envelope_roof_walls_rate_low",
+            "Ставка ограждающих конструкций / стен / кровли снижена",
+            float(data.get("envelope_roof_walls_rate_override") or 0),
+            ENVELOPE_NORMATIVE_RATE,
+        ),
+        (
+            "manual_earthworks_rate_low",
+            "Ставка земляных работ снижена",
+            float(data.get("earthworks_rate_override") or 0),
+            _earthworks_normative_rate(data),
+        ),
+    )
+    for code, title, manual_rate, normative_rate in checks:
+        if manual_rate > 0 and normative_rate > 0 and manual_rate < normative_rate * 0.85:
+            risks.append(
+                _risk(
+                    code,
+                    "medium",
+                    title,
+                    "Ставка снижена относительно норматива. Нужно подтвердить КП подрядчика или локальный сметный расчёт.",
+                    "Запросить коммерческое предложение подрядчика, смету или локальный расчёт, подтверждающий ручную ставку.",
+                )
+            )
+    return risks
+
+
+def _earthworks_normative_rate(data: dict[str, Any]) -> float:
+    foundation_type = str(data.get("foundation_type") or "").lower().replace("ё", "е").replace(" ", "")
+    if foundation_type == "сваи" and not bool(data.get("has_underground_part")):
+        return EARTHWORKS_PILE_NO_UNDERGROUND_RATE
+    if bool(data.get("has_underground_part")):
+        return EARTHWORKS_UNDERGROUND_RATE
+    return EARTHWORKS_BASE_RATE

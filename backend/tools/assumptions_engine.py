@@ -96,14 +96,14 @@ def apply_assumptions(project_input: ProjectInput) -> dict[str, Any]:
         )
     else:
         calculated_design = total_area * 1_500
-        if total_area <= 10_000:
+        if total_area <= 12_000:
             calculated_design = min(calculated_design, 10_000_000)
         data["design_cost_amount"] = round_money(calculated_design)
         assumptions.append(
             {
                 "field": "design_cost_amount",
                 "value": data["design_cost_amount"],
-                "reason": "Проектирование рассчитано по ставке 1 500 ₽/м² общей площади; для объектов до 10 000 м² применяется ориентир до 10 000 000 ₽.",
+                "reason": "Проектирование рассчитано по ставке 1 500 ₽/м² общей площади; для объектов до 12 000 м² применяется ограничение 10 000 000 ₽.",
                 "source": "developer_norm",
             }
         )
@@ -130,7 +130,86 @@ def apply_assumptions(project_input: ProjectInput) -> dict[str, Any]:
             }
         )
 
-    if str(data.get("foundation_type") or "").lower().replace("ё", "е") == "сваи" and not data.get("has_underground_part"):
+    foundation_type = str(data.get("foundation_type") or "").lower().replace("ё", "е")
+    has_underground_part = bool(data.get("has_underground_part"))
+    above_ground_override = float(data.get("above_ground_structures_rate_override") or 0)
+    envelope_override = float(data.get("envelope_roof_walls_rate_override") or 0)
+    earthworks_override = float(data.get("earthworks_rate_override") or 0)
+    object_class = str(data.get("object_class") or "").lower().replace("ё", "е")
+
+    if above_ground_override > 0:
+        above_ground_rate = above_ground_override
+        above_ground_reason = "Ставка 2.5 надземных конструкций задана пользователем."
+    elif foundation_type == "сваи" and not has_underground_part:
+        above_ground_rate = 19_500
+        above_ground_reason = "Ставка 2.5 снижена для типового надземного конструктива на сваях без подземной части."
+    else:
+        above_ground_rate = 23_120
+        above_ground_reason = "Ставка 2.5 принята по нормативному ориентиру модели."
+    data["above_ground_structures_rate"] = above_ground_rate
+    assumptions.append(
+        {
+            "field": "above_ground_structures_rate",
+            "value": above_ground_rate,
+            "reason": above_ground_reason,
+            "source": "user_input" if above_ground_override > 0 else "developer_norm",
+        }
+    )
+
+    if envelope_override > 0:
+        envelope_rate = envelope_override
+        envelope_reason = "Ставка 2.6 ограждающих конструкций задана пользователем."
+    elif object_class in {"эконом", "economy", "комфорт", "comfort"}:
+        envelope_rate = 8_500
+        envelope_reason = "Ставка 2.6 снижена для эконом/комфорт класса без повышенной отделки ограждающих конструкций."
+    else:
+        envelope_rate = 11_560
+        envelope_reason = "Ставка 2.6 принята по нормативному ориентиру модели."
+    data["envelope_roof_walls_rate"] = envelope_rate
+    assumptions.append(
+        {
+            "field": "envelope_roof_walls_rate",
+            "value": envelope_rate,
+            "reason": envelope_reason,
+            "source": "user_input" if envelope_override > 0 else "developer_norm",
+        }
+    )
+
+    if earthworks_override > 0:
+        earthworks_rate = earthworks_override
+        earthworks_reason = "Ставка земляных работ задана пользователем."
+        earthworks_source = "user_input"
+    elif foundation_type == "сваи" and not has_underground_part:
+        earthworks_rate = 800
+        earthworks_reason = "Земляные работы снижены из-за свайного фундамента и отсутствия подземной части."
+        earthworks_source = "developer_norm"
+    elif has_underground_part:
+        earthworks_rate = 3_000
+        earthworks_reason = "Земляные работы рассчитаны с учётом подземной части."
+        earthworks_source = "developer_norm"
+    else:
+        earthworks_rate = 1_800
+        earthworks_reason = "Земляные работы рассчитаны по базовому нормативу модели."
+        earthworks_source = "developer_norm"
+    data["earthworks_rate"] = earthworks_rate
+    assumptions.append(
+        {
+            "field": "earthworks_rate",
+            "value": earthworks_rate,
+            "reason": earthworks_reason,
+            "source": earthworks_source,
+        }
+    )
+    assumptions.append(
+        {
+            "field": "manual_budget_adjustments_comment",
+            "value": "Ручные корректировки ключевых ставок имеют приоритет над нормативами, если значение больше 0.",
+            "reason": "Добавлена прозрачная настройка ключевых статей 2.5, 2.6, 3.1, 2.1 и 2.2.",
+            "source": "developer_norm",
+        }
+    )
+
+    if foundation_type == "сваи" and not has_underground_part:
         assumptions.extend(
             [
                 {

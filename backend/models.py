@@ -29,8 +29,11 @@ class ProjectInput(BaseModel):
     foundation_type: str | None = Field(default=None)
     has_underground_part: bool | None = None
     sellable_finish_level: str | None = Field(default=None)
+    above_ground_structures_rate_override: float | None = Field(default=None, ge=0)
+    envelope_roof_walls_rate_override: float | None = Field(default=None, ge=0)
     design_cost_override: float | None = Field(default=None, ge=0)
     preparation_cost_override: float | None = Field(default=None, ge=0)
+    earthworks_rate_override: float | None = Field(default=None, ge=0)
 
     @field_validator("credit_share", "credit_rate")
     @classmethod

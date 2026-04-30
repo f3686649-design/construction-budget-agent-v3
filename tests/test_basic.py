@@ -40,6 +40,22 @@ def _technology_model(**kwargs) -> dict:
     return build_financial_model(ProjectInput(**base))
 
 
+def _yakutsk_122_model(**kwargs) -> dict:
+    base = {
+        "project_name": "Многоквартирный жилой дом в 122 квартале г. Якутска",
+        "city": "Якутск",
+        "object_type": "Жилой дом",
+        "object_class": "комфорт",
+        "total_area": 10_795.3,
+        "sellable_area": 7_800,
+        "foundation_type": "сваи",
+        "has_underground_part": False,
+        "sellable_finish_level": "черновая",
+    }
+    base.update(kwargs)
+    return build_financial_model(ProjectInput(**base))
+
+
 def _detail_item(model: dict, name: str) -> dict:
     return next(row for row in model["detailed_budget"]["items"] if row["Статья"] == name)
 
@@ -594,3 +610,60 @@ def test_rough_finish_is_cheaper_than_white_box_and_finished() -> None:
 def test_detailed_budget_total_still_matches_budget_after_technology_adjustments() -> None:
     model = _technology_model()
     assert model["detailed_budget"]["total_budget"] == pytest.approx(model["budget"]["total_budget"], abs=0.05)
+
+
+def test_above_ground_structures_for_piles_without_underground_use_19500_rate() -> None:
+    model = _yakutsk_122_model()
+    item = _detail_item(model, "Устройство несущих конструкций надземной части")
+    assert item["Ставка"] == pytest.approx(19_500)
+    assert item["Сумма"] == pytest.approx(10_795.3 * 19_500, abs=1)
+    assert item["Источник значения"] == "технологическая корректировка"
+
+
+def test_envelope_roof_walls_for_economy_comfort_use_8500_rate() -> None:
+    model = _yakutsk_122_model()
+    item = _detail_item(model, "Ограждающие конструкции / внутренние стены / кровля")
+    assert item["Ставка"] == pytest.approx(8_500)
+    assert item["Сумма"] == pytest.approx(10_795.3 * 8_500, abs=1)
+    assert item["Источник значения"] == "технологическая корректировка"
+
+
+def test_design_for_object_under_12000_m2_is_capped_at_10_million() -> None:
+    model = _yakutsk_122_model()
+    design = _detail_item(model, "Проектирование")
+    assert design["Сумма"] == pytest.approx(10_000_000, abs=1)
+    assert model["budget"]["design"] == pytest.approx(10_000_000, abs=1)
+
+
+def test_above_ground_structures_manual_override_has_priority() -> None:
+    model = _yakutsk_122_model(above_ground_structures_rate_override=17_000)
+    item = _detail_item(model, "Устройство несущих конструкций надземной части")
+    assert item["Ставка"] == pytest.approx(17_000)
+    assert item["Сумма"] == pytest.approx(10_795.3 * 17_000, abs=1)
+    assert item["Источник значения"] == "ручная корректировка"
+
+
+def test_envelope_roof_walls_manual_override_has_priority() -> None:
+    model = _yakutsk_122_model(envelope_roof_walls_rate_override=7_000)
+    item = _detail_item(model, "Ограждающие конструкции / внутренние стены / кровля")
+    assert item["Ставка"] == pytest.approx(7_000)
+    assert item["Сумма"] == pytest.approx(10_795.3 * 7_000, abs=1)
+    assert item["Источник значения"] == "ручная корректировка"
+
+
+def test_design_manual_override_has_priority() -> None:
+    model = _yakutsk_122_model(design_cost_override=6_000_000)
+    design = _detail_item(model, "Проектирование")
+    assert design["Сумма"] == pytest.approx(6_000_000, abs=1)
+    assert model["budget"]["design"] == pytest.approx(6_000_000, abs=1)
+    assert design["Источник значения"] == "ручная корректировка"
+
+
+def test_detailed_budget_total_matches_budget_after_key_rate_adjustments() -> None:
+    model = _yakutsk_122_model(
+        above_ground_structures_rate_override=17_000,
+        envelope_roof_walls_rate_override=7_000,
+        design_cost_override=6_000_000,
+    )
+    detail_sum = sum(row["Сумма"] for row in model["detailed_budget"]["items"])
+    assert detail_sum == pytest.approx(model["budget"]["total_budget"], abs=0.05)
