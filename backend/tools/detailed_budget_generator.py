@@ -18,6 +18,7 @@ EARTHWORKS_BASE_RATE = 1_800
 DESIGN_RATE = 1_500
 DESIGN_CAP_AREA = 12_000
 DESIGN_CAP_AMOUNT = 10_000_000
+SELLABLE_FINISH_DEFAULT_RATE = 11_450
 
 
 def generate_detailed_budget(data: dict[str, Any], budget: dict[str, Any], economics: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -106,9 +107,12 @@ def apply_detailed_budget_to_budget(data: dict[str, Any], budget: dict[str, Any]
     engineering_total = _engineering_total(detailed_budget["items"])
     pile_item = _item_by_code(detailed_budget["items"], "2.3")
     underground_item = _item_by_code(detailed_budget["items"], "2.4")
+    finish_item = _item_by_code(detailed_budget["items"], "2.8")
     data["pile_foundation_amount"] = round_money(float(pile_item.get("Сумма") or 0))
     data["pile_foundation_rate"] = round_money(float(pile_item.get("Ставка") or 0))
     data["underground_part_amount"] = round_money(float(underground_item.get("Сумма") or 0))
+    data["sellable_finish_rate"] = round_money(float(finish_item.get("Ставка") or 0))
+    data["sellable_finish_amount"] = round_money(float(finish_item.get("Сумма") or 0))
     data["engineering_systems_amount"] = engineering_total
     data["engineering_systems_share_of_cmr"] = round(engineering_total / float(updated["cmr"]), 4) if updated["cmr"] else 0.0
     data["adjusted_total_budget"] = total_budget
@@ -435,9 +439,11 @@ def _effective_entry(entry: dict[str, Any], data: dict[str, Any]) -> dict[str, A
         elif technology_adjusted:
             effective["примечание"] = "Скорректировано: эконом/комфорт класс, без повышенной отделки ограждающих конструкций."
     if code == "2.8":
-        effective["ставка"] = _finish_rate(finish_level)
-        effective["примечание"] = f"Отделка реализуемых помещений: {data.get('sellable_finish_level') or 'черновая'}."
-        effective["источник значения"] = "технологическая корректировка"
+        manual = float(data.get("sellable_finish_rate_override") or 0) > 0
+        effective["ставка"] = _finish_rate(finish_level, data)
+        effective["нормативная ставка"] = _finish_rate(finish_level, {})
+        effective["примечание"] = f"Отделка реализуемых помещений: {data.get('sellable_finish_level') or 'черновая'}; база NSA."
+        effective["источник значения"] = "ручная корректировка" if manual else "уровень отделки"
     if code in {"2.11", "2.12", "2.13", "2.14", "2.15"}:
         override_by_code = {
             "2.11": ("plumbing_rate_override", 4_200, "Сантехнические системы рассчитаны по оптимизированному нормативу или ручной ставке."),
@@ -592,17 +598,21 @@ def _foundation_manual_mode(data: dict[str, Any]) -> str | None:
 
 def _sellable_finish_amount(data: dict[str, Any]) -> float:
     sellable_area = float(data.get("sellable_area") or 0)
-    return round_money(sellable_area * _finish_rate(_normalize(data.get("sellable_finish_level"))))
+    return round_money(sellable_area * _finish_rate(_normalize(data.get("sellable_finish_level")), data))
 
 
-def _finish_rate(finish_level: str) -> float:
+def _finish_rate(finish_level: str, data: dict[str, Any] | None = None) -> float:
+    data = data or {}
+    override = float(data.get("sellable_finish_rate_override") or 0)
+    if override > 0:
+        return override
     rates = {
         "безотделки": 0,
-        "черновая": 2_500,
-        "whitebox": 10_000,
-        "чистовая": 22_000,
+        "черновая": SELLABLE_FINISH_DEFAULT_RATE,
+        "whitebox": 14_000,
+        "чистовая": 24_000,
     }
-    return float(rates.get(finish_level, 2_500))
+    return float(rates.get(finish_level, SELLABLE_FINISH_DEFAULT_RATE))
 
 
 def _build_row(
@@ -744,6 +754,8 @@ def _budget_adjustments(items: list[dict[str, Any]], data: dict[str, Any]) -> li
     return [
         {
             "Статья": row["Статья"],
+            "База": row.get("База", ""),
+            "Ед.": row.get("Ед.", ""),
             "Сумма": row["Сумма"],
             "Ставка": row["Ставка"],
             "Нормативная сумма": row.get("Нормативная сумма", 0),

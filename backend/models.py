@@ -34,6 +34,7 @@ class ProjectInput(BaseModel):
     design_cost_override: float | None = Field(default=None, ge=0)
     preparation_cost_override: float | None = Field(default=None, ge=0)
     earthworks_rate_override: float | None = Field(default=None, ge=0)
+    sellable_finish_rate_override: float | None = Field(default=None, ge=0)
     pile_foundation_rate_override: float | None = Field(default=None, ge=0)
     pile_foundation_cost_override: float | None = Field(default=None, ge=0)
     pile_count: int | None = Field(default=None, ge=0)

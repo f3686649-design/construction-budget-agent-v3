@@ -52,8 +52,30 @@ def analyze_risks(
     pile_rate = float(data.get("pile_foundation_rate") or 0)
     engineering_share = float(data.get("engineering_systems_share_of_cmr") or 0)
     is_pile_foundation = str(data.get("foundation_type") or "").lower().replace("ё", "е").replace(" ", "") == "сваи"
+    finish_level = str(data.get("sellable_finish_level") or "").lower().replace("ё", "е").replace(" ", "").replace("-", "")
+    sellable_finish_rate = float(data.get("sellable_finish_rate") or 0)
 
     risks.extend(_manual_rate_risks(data))
+    if finish_level == "черновая" and sellable_finish_rate < 8_000:
+        risks.append(
+            _risk(
+                "low_rough_finish_rate",
+                "medium",
+                "Низкая ставка черновой отделки",
+                "Ставка отделки реализуемых помещений выглядит низкой. Проверьте состав черновой отделки.",
+                "Сверить состав черновой отделки, ведомость работ и ставку с КП подрядчиков.",
+            )
+        )
+    if finish_level == "черновая" and sellable_finish_rate > 15_000:
+        risks.append(
+            _risk(
+                "high_rough_finish_rate",
+                "medium",
+                "Высокая ставка черновой отделки",
+                "Ставка черновой отделки высокая. Проверьте, не включены ли в неё работы уровня white box или чистовой отделки.",
+                "Разделить черновую отделку, white box и чистовую отделку в смете.",
+            )
+        )
     if is_pile_foundation and pile_rate and pile_rate < 5_000:
         risks.append(
             _risk(

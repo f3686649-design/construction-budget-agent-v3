@@ -763,3 +763,39 @@ def test_detailed_budget_sum_is_the_model_total_budget() -> None:
     model = _yakutsk_122_model(pile_foundation_cost_override=40_000_000, plumbing_rate_override=3_900)
     detail_sum = sum(row["Сумма"] for row in model["detailed_budget"]["items"])
     assert detail_sum == pytest.approx(model["budget"]["total_budget"], abs=0.05)
+
+
+def test_rough_sellable_finish_rate_is_11450_per_nsa_m2() -> None:
+    model = _yakutsk_122_model(sellable_area=7_860.32, sellable_finish_level="черновая")
+    finish = _detail_item(model, "Отделка реализуемых площадей")
+    assert finish["База"] == pytest.approx(7_860.32)
+    assert finish["Ед."] == "м² NSA"
+    assert finish["Ставка"] == pytest.approx(11_450)
+    assert finish["Источник значения"] == "уровень отделки"
+
+
+def test_rough_sellable_finish_amount_for_7860_32_m2_is_about_90_million() -> None:
+    model = _yakutsk_122_model(sellable_area=7_860.32, sellable_finish_level="черновая")
+    finish = _detail_item(model, "Отделка реализуемых площадей")
+    assert finish["Сумма"] == pytest.approx(90_000_664, abs=1)
+
+
+def test_sellable_finish_rate_override_has_priority() -> None:
+    model = _yakutsk_122_model(sellable_area=7_860.32, sellable_finish_rate_override=9_000)
+    finish = _detail_item(model, "Отделка реализуемых площадей")
+    assert finish["Ставка"] == pytest.approx(9_000)
+    assert finish["Сумма"] == pytest.approx(7_860.32 * 9_000, abs=1)
+    assert finish["Источник значения"] == "ручная корректировка"
+
+
+def test_no_sellable_finish_level_zeroes_finish_amount() -> None:
+    model = _yakutsk_122_model(sellable_area=7_860.32, sellable_finish_level="без отделки")
+    finish = _detail_item(model, "Отделка реализуемых площадей")
+    assert finish["Ставка"] == 0
+    assert finish["Сумма"] == 0
+
+
+def test_detailed_budget_total_matches_budget_after_sellable_finish_change() -> None:
+    model = _yakutsk_122_model(sellable_area=7_860.32, sellable_finish_level="черновая")
+    detail_sum = sum(row["Сумма"] for row in model["detailed_budget"]["items"])
+    assert detail_sum == pytest.approx(model["budget"]["total_budget"], abs=0.05)

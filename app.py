@@ -72,6 +72,13 @@ with st.form("model_form"):
         design_cost_override = st.number_input("Проектирование, ₽ — можно оставить пустым", min_value=0.0, value=0.0, step=1_000_000.0)
         preparation_cost_override = st.number_input("Подготовительные работы, ₽ — можно оставить пустым", min_value=0.0, value=0.0, step=1_000_000.0)
         earthworks_rate_override = st.number_input("Земляные работы, ₽/м² — можно оставить пустым", min_value=0.0, value=0.0, step=100.0)
+        sellable_finish_rate_override = st.number_input(
+            "Ставка отделки реализуемых помещений, ₽/м² NSA",
+            min_value=0.0,
+            value=0.0,
+            step=500.0,
+        )
+        st.caption("Если поле пустое или 0, агент использует ставку по уровню отделки.")
         st.markdown("**Ручные корректировки свайного основания**")
         st.caption("Если поле пустое или 0, агент использует оптимизированный норматив. Если заполнено — ручное значение имеет приоритет.")
         foundation_optimization_mode = st.selectbox("Режим расчёта свайного основания", ["оптимизированный", "нормативный"])
@@ -120,6 +127,7 @@ if submitted:
         design_cost_override=_optional_number(design_cost_override),
         preparation_cost_override=_optional_number(preparation_cost_override),
         earthworks_rate_override=_optional_number(earthworks_rate_override),
+        sellable_finish_rate_override=_optional_number(sellable_finish_rate_override),
         pile_foundation_rate_override=_optional_number(pile_foundation_rate_override),
         pile_foundation_cost_override=_optional_number(pile_foundation_cost_override),
         pile_count=int(pile_count) if pile_count else None,

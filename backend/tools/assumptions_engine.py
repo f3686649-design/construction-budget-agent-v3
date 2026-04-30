@@ -221,9 +221,33 @@ def apply_assumptions(project_input: ProjectInput) -> dict[str, Any]:
         {
             "field": "manual_budget_adjustments_comment",
             "value": "Ручные корректировки ключевых ставок имеют приоритет над нормативами, если значение больше 0.",
-            "reason": "Добавлена прозрачная настройка ключевых статей 2.5, 2.6, 3.1, 2.1 и 2.2.",
+            "reason": "Добавлена прозрачная настройка ключевых статей 2.5, 2.6, 3.1, 2.1, 2.2 и 2.8.",
             "source": "developer_norm",
         }
+    )
+    sellable_finish_rate = _sellable_finish_rate(data)
+    data["sellable_finish_rate"] = sellable_finish_rate
+    assumptions.extend(
+        [
+            {
+                "field": "sellable_finish_level",
+                "value": data["sellable_finish_level"],
+                "reason": f"Уровень отделки реализуемых помещений: {data['sellable_finish_level']}.",
+                "source": "developer_assumption",
+            },
+            {
+                "field": "sellable_finish_rate",
+                "value": sellable_finish_rate,
+                "reason": "Ставка отделки реализуемых помещений рассчитана по уровню отделки или ручной корректировке.",
+                "source": "user_input" if float(data.get("sellable_finish_rate_override") or 0) > 0 else "developer_norm",
+            },
+            {
+                "field": "sellable_finish_calculation_logic",
+                "value": "2.8 = продаваемая площадь NSA × ставка отделки реализуемых помещений",
+                "reason": "Черновая отделка — 11 450 ₽/м² NSA; white box — 14 000 ₽/м²; чистовая — 24 000 ₽/м²; без отделки — 0 ₽/м².",
+                "source": "developer_norm",
+            },
+        ]
     )
 
     pile_rate = _pile_foundation_rate(data)
@@ -281,15 +305,6 @@ def apply_assumptions(project_input: ProjectInput) -> dict[str, Any]:
                 },
             ]
         )
-    assumptions.append(
-        {
-            "field": "sellable_finish_level",
-            "value": data["sellable_finish_level"],
-            "reason": f"Отделка реализуемых помещений: {data['sellable_finish_level']}.",
-            "source": "developer_assumption",
-        }
-    )
-
     trace.append(
         {
             "step": "apply_assumptions",
@@ -329,3 +344,17 @@ def _override_source_field(field: str, data: dict[str, Any]) -> bool:
         "ventilation_rate": "ventilation_rate_override",
     }
     return float(data.get(mapping[field]) or 0) > 0
+
+
+def _sellable_finish_rate(data: dict[str, Any]) -> float:
+    override = float(data.get("sellable_finish_rate_override") or 0)
+    if override > 0:
+        return override
+    finish_level = str(data.get("sellable_finish_level") or "").lower().replace("ё", "е").replace(" ", "").replace("-", "")
+    rates = {
+        "безотделки": 0,
+        "черновая": 11_450,
+        "whitebox": 14_000,
+        "чистовая": 24_000,
+    }
+    return float(rates.get(finish_level, 11_450))
