@@ -1,5 +1,4 @@
-﻿.venv/
-.env
+.venv/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -19,11 +18,3 @@ backend/storage/uploads/
 backend/storage/outputs/
 backend/storage/projects/*
 !backend/storage/projects/.gitkeep
-
-users.json
-backend/storage/projects/
-backend/storage/outputs/
-backend/storage/uploads/
-logs/
-frontend/node_modules/
-frontend/dist/

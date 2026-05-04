@@ -1,0 +1,11 @@
+services:
+  construction-budget-agent-v3:
+    build: .
+    container_name: construction-budget-agent-v3
+    ports:
+      - "${STREAMLIT_PORT:-8501}:8501"
+    volumes:
+      - ./users.json:/app/users.json
+      - ./backend/storage/outputs:/app/backend/storage/outputs
+      - ./backend/storage/projects:/app/backend/storage/projects
+    restart: unless-stopped
