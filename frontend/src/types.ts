@@ -55,6 +55,17 @@ export interface ProjectInput {
   ventilation_rate_override?: number;
 }
 
+export interface AuthUser {
+  login: string;
+  role: "admin" | "user" | string;
+}
+
+export interface AuthSession {
+  access_token: string;
+  token_type: string;
+  user: AuthUser;
+}
+
 export interface ProjectSummary {
   project_name?: string;
   city?: string;

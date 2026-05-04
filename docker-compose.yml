@@ -6,7 +6,11 @@ services:
     container_name: construction-budget-agent-backend
     ports:
       - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      AUTH_SECRET: ${AUTH_SECRET:-construction-budget-agent-v3-change-me}
+      AUTH_TOKEN_TTL_SECONDS: ${AUTH_TOKEN_TTL_SECONDS:-43200}
     volumes:
+      - ./users.json:/app/users.json:ro
       - ./backend/storage/projects:/app/backend/storage/projects
       - ./backend/storage/outputs:/app/backend/storage/outputs
       - ./backend/storage/uploads:/app/backend/storage/uploads

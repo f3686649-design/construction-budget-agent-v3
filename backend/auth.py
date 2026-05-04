@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
+import os
 import secrets
+import time
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +15,8 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 USERS_FILE = ROOT_DIR / "users.json"
 HASH_ALGORITHM = "pbkdf2_sha256"
 DEFAULT_ITERATIONS = 200_000
+TOKEN_TTL_SECONDS = int(os.getenv("AUTH_TOKEN_TTL_SECONDS", "43200"))
+AUTH_SECRET = os.getenv("AUTH_SECRET", "construction-budget-agent-v3-local-secret")
 
 
 def hash_password(password: str, salt: str | None = None, iterations: int = DEFAULT_ITERATIONS) -> str:
@@ -55,3 +60,52 @@ def authenticate_user(login: str, password: str, users_file: Path = USERS_FILE) 
                 "role": str(user.get("role") or "user"),
             }
     return None
+
+
+def create_access_token(user: dict[str, str], ttl_seconds: int = TOKEN_TTL_SECONDS) -> str:
+    payload = {
+        "login": user["login"],
+        "role": user.get("role") or "user",
+        "exp": int(time.time()) + ttl_seconds,
+    }
+    payload_bytes = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    signature = hmac.new(AUTH_SECRET.encode("utf-8"), payload_bytes, hashlib.sha256).digest()
+    return f"{_base64url_encode(payload_bytes)}.{_base64url_encode(signature)}"
+
+
+def verify_access_token(token: str) -> dict[str, str] | None:
+    try:
+        payload_raw, signature_raw = token.split(".", 1)
+        payload_bytes = _base64url_decode(payload_raw)
+        signature = _base64url_decode(signature_raw)
+    except (ValueError, TypeError):
+        return None
+
+    expected_signature = hmac.new(AUTH_SECRET.encode("utf-8"), payload_bytes, hashlib.sha256).digest()
+    if not hmac.compare_digest(signature, expected_signature):
+        return None
+
+    try:
+        payload = json.loads(payload_bytes.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+
+    if int(payload.get("exp") or 0) < int(time.time()):
+        return None
+
+    login = str(payload.get("login") or "").strip()
+    if not login:
+        return None
+    return {
+        "login": login,
+        "role": str(payload.get("role") or "user"),
+    }
+
+
+def _base64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _base64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode((value + padding).encode("ascii"))

@@ -6,6 +6,9 @@ interface LayoutProps {
   onNavigate: (page: PageKey) => void;
   children: ReactNode;
   projectName?: string;
+  userName?: string;
+  userRole?: string;
+  onLogout: () => void;
 }
 
 const NAVIGATION: NavigationItem[] = [
@@ -22,7 +25,7 @@ const NAVIGATION: NavigationItem[] = [
   { key: "history", label: "История проектов" }
 ];
 
-export function Layout({ activePage, onNavigate, children, projectName }: LayoutProps) {
+export function Layout({ activePage, onNavigate, children, projectName, userName, userRole, onLogout }: LayoutProps) {
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -50,6 +53,15 @@ export function Layout({ activePage, onNavigate, children, projectName }: Layout
         <div className="sidebar-note">
           <span>Текущий проект</span>
           <strong>{projectName || "Расчёт ещё не создан"}</strong>
+        </div>
+
+        <div className="user-box">
+          <span>Пользователь</span>
+          <strong>{userName || "неизвестно"}</strong>
+          <small>Роль: {userRole || "user"}</small>
+          <button className="logout-button" type="button" onClick={onLogout}>
+            Выйти
+          </button>
         </div>
       </aside>
 

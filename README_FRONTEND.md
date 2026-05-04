@@ -38,25 +38,29 @@ http://localhost:5173
 
 ## API
 
-По умолчанию frontend обращается к:
+По умолчанию frontend обращается к относительному пути:
 
 ```text
-http://localhost:8000
+/api
 ```
 
 Если нужен другой адрес backend, создайте в папке `frontend` файл `.env`:
 
 ```text
-VITE_API_URL=http://localhost:8000
+VITE_API_BASE_URL=http://localhost:8000/api
 ```
 
 Используемые endpoints:
 
 - `GET /api/health`
+- `POST /api/auth/login`
+- `GET /api/auth/me`
 - `POST /api/generate-model`
 - `GET /api/projects`
 - `GET /api/projects/{project_id}`
 - `GET /api/download/{filename}`
+
+Все endpoints, кроме `/api/health` и `/api/auth/login`, требуют авторизацию. Frontend сохраняет токен в `localStorage` и передаёт его в `Authorization` header.
 
 ## Разделы кабинета
 
@@ -76,10 +80,11 @@ VITE_API_URL=http://localhost:8000
 
 1. Запустите backend на порту `8000`.
 2. Запустите frontend на порту `5173`.
-3. Откройте раздел `Новый расчёт`.
-4. Заполните основные параметры проекта.
-5. Нажмите `Сформировать финансовую модель`.
-6. После расчёта откроется dashboard, а Excel можно скачать кнопкой `Скачать Excel`.
+3. Войдите по логину и паролю из `users.json`.
+4. Откройте раздел `Новый расчёт`.
+5. Заполните основные параметры проекта.
+6. Нажмите `Сформировать финансовую модель`.
+7. После расчёта откроется dashboard, а Excel можно скачать кнопкой `Скачать Excel`.
 
 Все расчёты сохраняются backend API в:
 

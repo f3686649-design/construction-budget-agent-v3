@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from openpyxl import load_workbook
 
-from backend.auth import authenticate_user, hash_password
+from backend.auth import USERS_FILE, authenticate_user, hash_password
 from backend.main import OUTPUT_DIR, app, build_financial_model, generate_model, health
 from backend.models import ProjectInput
 from backend.project_history import PROJECTS_DIR, load_project_history, metadata_path_for_project, save_project_metadata
@@ -43,16 +43,18 @@ class ASGIResponse:
         return json.loads(self.content.decode("utf-8"))
 
 
-def api_request(method: str, path: str, json_body: dict | None = None) -> ASGIResponse:
-    return asyncio.run(_api_request(method, path, json_body))
+def api_request(method: str, path: str, json_body: dict | None = None, headers: dict[str, str] | None = None) -> ASGIResponse:
+    return asyncio.run(_api_request(method, path, json_body, headers))
 
 
-async def _api_request(method: str, path: str, json_body: dict | None = None) -> ASGIResponse:
+async def _api_request(method: str, path: str, json_body: dict | None = None, headers: dict[str, str] | None = None) -> ASGIResponse:
     body = b""
-    headers = [(b"host", b"testserver")]
+    request_headers = [(b"host", b"testserver")]
     if json_body is not None:
         body = json.dumps(json_body).encode("utf-8")
-        headers.append((b"content-type", b"application/json"))
+        request_headers.append((b"content-type", b"application/json"))
+    for key, value in (headers or {}).items():
+        request_headers.append((key.lower().encode("latin-1"), value.encode("latin-1")))
     scope = {
         "type": "http",
         "asgi": {"version": "3.0", "spec_version": "2.3"},
@@ -62,7 +64,7 @@ async def _api_request(method: str, path: str, json_body: dict | None = None) ->
         "path": path,
         "raw_path": path.encode("utf-8"),
         "query_string": b"",
-        "headers": headers,
+        "headers": request_headers,
         "client": ("testclient", 50000),
         "server": ("testserver", 80),
         "root_path": "",
@@ -92,6 +94,40 @@ async def _api_request(method: str, path: str, json_body: dict | None = None) ->
 
     await app(scope, receive, send)
     return ASGIResponse(response_status, response_headers, bytes(response_body))
+
+
+@contextmanager
+def configured_api_users():
+    original = USERS_FILE.read_text(encoding="utf-8") if USERS_FILE.exists() else None
+    USERS_FILE.write_text(
+        json.dumps(
+            {
+                "users": [
+                    {
+                        "login": "ivan",
+                        "password_hash": hash_password("secure-password", salt="api-test-salt"),
+                        "role": "user",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    try:
+        yield
+    finally:
+        if original is None:
+            USERS_FILE.unlink(missing_ok=True)
+        else:
+            USERS_FILE.write_text(original, encoding="utf-8")
+
+
+def api_login_headers() -> dict[str, str]:
+    response = api_request("POST", "/api/auth/login", {"login": "ivan", "password": "secure-password"})
+    assert response.status_code == 200
+    token = response.json()["access_token"]
+    return {"authorization": f"Bearer {token}"}
 
 
 def _minimal_model() -> dict:
@@ -160,6 +196,29 @@ def test_api_health_works() -> None:
     }
 
 
+def test_api_login_success() -> None:
+    with configured_api_users():
+        response = api_request("POST", "/api/auth/login", {"login": "ivan", "password": "secure-password"})
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["access_token"]
+        assert payload["token_type"] == "bearer"
+        assert payload["user"] == {"login": "ivan", "role": "user"}
+
+
+def test_api_login_rejects_wrong_password() -> None:
+    with configured_api_users():
+        response = api_request("POST", "/api/auth/login", {"login": "ivan", "password": "wrong-password"})
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Неверный логин или пароль."
+
+
+def test_protected_endpoint_requires_token() -> None:
+    response = api_request("GET", "/api/projects")
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Требуется авторизация."
+
+
 def test_user_can_login() -> None:
     with workspace_tmp_dir() as tmp_dir:
         users_file = tmp_dir / "users.json"
@@ -214,73 +273,84 @@ def test_excel_is_saved() -> None:
 
 
 def test_api_generate_model_creates_project() -> None:
-    response = api_request(
-        "POST",
-        "/api/generate-model",
-        {
-            "project_name": "API project",
-            "city": "Якутск",
-            "total_area": 6_666,
-            "sellable_area": 5_200,
-        },
-    )
-    assert response.status_code == 200
-    payload = response.json()
-    project_id = payload["project_id"]
-    try:
-        assert project_id
-        assert payload["summary"]["total_budget"] > 0
-        assert payload["excel_filename"].endswith(".xlsx")
-        assert payload["download_url"] == f"/api/download/{payload['excel_filename']}"
-        project_dir = PROJECTS_DIR / project_id
-        assert (project_dir / "input.json").exists()
-        assert (project_dir / "result.json").exists()
-        assert (project_dir / "metadata.json").exists()
-        assert (project_dir / payload["excel_filename"]).exists()
-    finally:
-        cleanup_project(project_id)
+    with configured_api_users():
+        headers = api_login_headers()
+        response = api_request(
+            "POST",
+            "/api/generate-model",
+            {
+                "project_name": "API project",
+                "city": "Якутск",
+                "total_area": 6_666,
+                "sellable_area": 5_200,
+            },
+            headers,
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        project_id = payload["project_id"]
+        try:
+            assert project_id
+            assert payload["summary"]["total_budget"] > 0
+            assert payload["excel_filename"].endswith(".xlsx")
+            assert payload["download_url"] == f"/api/download/{payload['excel_filename']}"
+            project_dir = PROJECTS_DIR / project_id
+            assert (project_dir / "input.json").exists()
+            assert (project_dir / "result.json").exists()
+            assert (project_dir / "metadata.json").exists()
+            assert (project_dir / payload["excel_filename"]).exists()
+            saved_metadata = json.loads((project_dir / "metadata.json").read_text(encoding="utf-8"))
+            assert saved_metadata["user"] == "ivan"
+        finally:
+            cleanup_project(project_id)
 
 
 def test_api_projects_returns_history() -> None:
-    generated = api_request("POST", "/api/generate-model", {"project_name": "History API project"})
-    assert generated.status_code == 200
-    project_id = generated.json()["project_id"]
-    try:
-        response = api_request("GET", "/api/projects")
-        assert response.status_code == 200
-        rows = response.json()
-        assert any(row["project_id"] == project_id for row in rows)
-    finally:
-        cleanup_project(project_id)
+    with configured_api_users():
+        headers = api_login_headers()
+        generated = api_request("POST", "/api/generate-model", {"project_name": "History API project"}, headers)
+        assert generated.status_code == 200
+        project_id = generated.json()["project_id"]
+        try:
+            response = api_request("GET", "/api/projects", headers=headers)
+            assert response.status_code == 200
+            rows = response.json()
+            assert any(row["project_id"] == project_id for row in rows)
+        finally:
+            cleanup_project(project_id)
 
 
 def test_api_project_returns_full_result() -> None:
-    generated = api_request("POST", "/api/generate-model", {"project_name": "Full result API project"})
-    assert generated.status_code == 200
-    project_id = generated.json()["project_id"]
-    try:
-        response = api_request("GET", f"/api/projects/{project_id}")
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["project_id"] == project_id
-        assert payload["budget"]["total_budget"] > 0
-        assert payload["input"]["project_name"] == "Full result API project"
-    finally:
-        cleanup_project(project_id)
+    with configured_api_users():
+        headers = api_login_headers()
+        generated = api_request("POST", "/api/generate-model", {"project_name": "Full result API project"}, headers)
+        assert generated.status_code == 200
+        project_id = generated.json()["project_id"]
+        try:
+            response = api_request("GET", f"/api/projects/{project_id}", headers=headers)
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["project_id"] == project_id
+            assert payload["budget"]["total_budget"] > 0
+            assert payload["input"]["project_name"] == "Full result API project"
+        finally:
+            cleanup_project(project_id)
 
 
 def test_api_download_returns_excel_file() -> None:
-    generated = api_request("POST", "/api/generate-model", {"project_name": "Download API project"})
-    assert generated.status_code == 200
-    payload = generated.json()
-    project_id = payload["project_id"]
-    try:
-        response = api_request("GET", payload["download_url"])
-        assert response.status_code == 200
-        assert response.content.startswith(b"PK")
-        assert "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" in response.headers["content-type"]
-    finally:
-        cleanup_project(project_id)
+    with configured_api_users():
+        headers = api_login_headers()
+        generated = api_request("POST", "/api/generate-model", {"project_name": "Download API project"}, headers)
+        assert generated.status_code == 200
+        payload = generated.json()
+        project_id = payload["project_id"]
+        try:
+            response = api_request("GET", payload["download_url"], headers=headers)
+            assert response.status_code == 200
+            assert response.content.startswith(b"PK")
+            assert "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" in response.headers["content-type"]
+        finally:
+            cleanup_project(project_id)
 
 
 def test_project_calculation_is_saved_to_history() -> None:

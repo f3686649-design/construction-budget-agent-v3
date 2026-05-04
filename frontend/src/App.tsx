@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { buildDownloadUrl, checkHealth, generateModel } from "./api/client";
+import { checkHealth, clearAuthSession, downloadExcel, generateModel, getMe, getStoredAuth, login } from "./api/client";
 import { Layout } from "./components/Layout";
 import { BudgetPage } from "./pages/BudgetPage";
 import { CreditCashflowPage } from "./pages/CreditCashflowPage";
@@ -7,18 +7,22 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { DscrPage } from "./pages/DscrPage";
 import { GprPage } from "./pages/GprPage";
 import { ImprovementPlanPage } from "./pages/ImprovementPlanPage";
+import { LoginPage } from "./pages/LoginPage";
 import { NewProjectPage } from "./pages/NewProjectPage";
 import { OptimizationPage } from "./pages/OptimizationPage";
 import { ProjectsHistoryPage } from "./pages/ProjectsHistoryPage";
 import { SalesPage } from "./pages/SalesPage";
 import { ScenariosPage } from "./pages/ScenariosPage";
-import type { GeneratedProject, PageKey, ProjectInput } from "./types";
+import type { AuthSession, GeneratedProject, PageKey, ProjectInput } from "./types";
 
 function App() {
   const [activePage, setActivePage] = useState<PageKey>("dashboard");
   const [project, setProject] = useState<GeneratedProject | null>(null);
   const [loading, setLoading] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [auth, setAuth] = useState<AuthSession | null>(() => getStoredAuth());
   const [backendStatus, setBackendStatus] = useState("проверяю соединение");
 
   useEffect(() => {
@@ -26,6 +30,38 @@ function App() {
       .then(() => setBackendStatus("backend доступен"))
       .catch(() => setBackendStatus("backend недоступен"));
   }, []);
+
+  useEffect(() => {
+    if (!auth) {
+      return;
+    }
+    getMe()
+      .then((user) => setAuth((current) => (current ? { ...current, user } : current)))
+      .catch(() => {
+        clearAuthSession();
+        setAuth(null);
+      });
+  }, []);
+
+  const handleLogin = async (loginValue: string, password: string) => {
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      const session = await login(loginValue, password);
+      setAuth(session);
+    } catch (requestError) {
+      setAuthError(requestError instanceof Error ? requestError.message : "Не удалось войти в кабинет.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    clearAuthSession();
+    setAuth(null);
+    setProject(null);
+    setActivePage("dashboard");
+  };
 
   const handleGenerate = async (input: ProjectInput) => {
     setLoading(true);
@@ -41,15 +77,37 @@ function App() {
     }
   };
 
+  const handleDownload = async () => {
+    if (!project) {
+      return;
+    }
+    try {
+      await downloadExcel(project.download_url, project.excel_filename);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Не удалось скачать Excel-файл.");
+    }
+  };
+
+  if (!auth) {
+    return <LoginPage onLogin={handleLogin} loading={authLoading} error={authError} backendStatus={backendStatus} />;
+  }
+
   return (
-    <Layout activePage={activePage} onNavigate={setActivePage} projectName={project?.summary.project_name}>
+    <Layout
+      activePage={activePage}
+      onNavigate={setActivePage}
+      projectName={project?.summary.project_name}
+      userName={auth.user.login}
+      userRole={auth.user.role}
+      onLogout={handleLogout}
+    >
       <div className={`backend-status ${backendStatus.includes("недоступен") ? "bad" : "good"}`}>{backendStatus}</div>
       {project ? (
         <div className="download-strip">
           <span>Excel-модель готова: {project.excel_filename}</span>
-          <a className="primary-link" href={buildDownloadUrl(project.download_url)}>
+          <button className="primary-link" type="button" onClick={handleDownload}>
             Скачать Excel
-          </a>
+          </button>
         </div>
       ) : null}
 
@@ -69,6 +127,7 @@ function App() {
             setProject(loadedProject);
             setActivePage("dashboard");
           }}
+          onDownload={downloadExcel}
         />
       )}
     </Layout>

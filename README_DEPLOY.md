@@ -3,7 +3,32 @@
 Docker-версия теперь использует вариант C: React frontend + FastAPI backend.
 Старая Streamlit-версия в Docker больше не запускается.
 
-## 1. Запуск через Docker
+## 1. Пользователи и пароли
+
+Перед первым запуском создайте рабочий `users.json` из примера:
+
+```powershell
+Copy-Item users.example.json users.json
+```
+
+`users.example.json` содержит только демонстрационные учётные записи:
+
+- `admin / admin123`
+- `user / user123`
+
+Перед внедрением обязательно смените пароли. Пароли в `users.json` хранятся только в виде PBKDF2-хэша.
+
+Чтобы создать хэш нового пароля:
+
+```powershell
+.\.venv\Scripts\python.exe -c "from backend.auth import hash_password; print(hash_password('НОВЫЙ_ПАРОЛЬ'))"
+```
+
+Замените значение `password_hash` у нужного пользователя в `users.json`.
+
+`users.json` не коммитится в репозиторий и добавлен в `.gitignore`, потому что это локальный файл с доступами конкретной организации.
+
+## 2. Запуск через Docker
 
 Создайте `.env` из примера:
 
@@ -35,7 +60,7 @@ Backend дополнительно доступен напрямую:
 http://localhost:8000/api/health
 ```
 
-## 2. Если порт 80 занят
+## 3. Если порт 80 занят
 
 Откройте `.env` и замените:
 
@@ -67,7 +92,7 @@ API через nginx будет работать так:
 http://localhost:8080/api/health
 ```
 
-## 3. Состав контейнеров
+## 4. Состав контейнеров
 
 `backend`:
 
@@ -84,7 +109,7 @@ http://localhost:8080/api/health
 - публикует порт `80:80`;
 - проксирует `/api/*` на `backend:8000`.
 
-## 4. Переменные окружения
+## 5. Переменные окружения
 
 Файл `.env.example`:
 
@@ -92,11 +117,13 @@ http://localhost:8080/api/health
 BACKEND_PORT=8000
 FRONTEND_PORT=80
 VITE_API_BASE_URL=/api
+AUTH_SECRET=change-this-secret-before-deploy
+AUTH_TOKEN_TTL_SECONDS=43200
 ```
 
-Для офисной сети обычно достаточно менять только `FRONTEND_PORT`, если порт `80` занят.
+Перед внедрением замените `AUTH_SECRET` на длинную случайную строку. Для офисной сети обычно достаточно менять только `FRONTEND_PORT`, если порт `80` занят.
 
-## 5. Где хранятся файлы
+## 6. Где хранятся файлы
 
 История проектов:
 
@@ -129,7 +156,9 @@ backend/storage/projects/{project_id}
 - `metadata.json`
 - Excel-файл
 
-## 6. Резервная копия
+В `metadata.json` сохраняется пользователь, который выполнил расчёт.
+
+## 7. Резервная копия
 
 Регулярно копируйте:
 
@@ -151,7 +180,7 @@ Copy-Item ".\backend\storage\uploads" ".\backup\$Date\uploads" -Recurse
 Copy-Item ".\users.json" ".\backup\$Date\users.json"
 ```
 
-## 7. Запуск без Docker для разработки
+## 8. Запуск без Docker для разработки
 
 Backend:
 
@@ -175,7 +204,7 @@ http://localhost:5173
 
 Vite проксирует `/api` на `http://localhost:8000`.
 
-## 8. Проверка перед внедрением
+## 9. Проверка перед внедрением
 
 Backend:
 

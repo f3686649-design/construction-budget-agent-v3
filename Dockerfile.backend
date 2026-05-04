@@ -10,12 +10,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend ./backend
 COPY main.py ./main.py
-COPY users.json ./users.json
+COPY users.example.json ./users.example.json
 
 RUN mkdir -p \
     backend/storage/projects \
     backend/storage/outputs \
-    backend/storage/uploads
+    backend/storage/uploads \
+    && printf '{"users":[]}\n' > users.json
 
 EXPOSE 8000
 

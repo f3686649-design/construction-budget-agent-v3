@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
-import { buildDownloadUrl, getProject, getProjects } from "../api/client";
+import { getProject, getProjects } from "../api/client";
 import { DataTable } from "../components/DataTable";
 import type { GeneratedProject, ProjectHistoryItem } from "../types";
 import { formatPercent, formatRub } from "../utils/format";
 
 interface ProjectsHistoryPageProps {
   onLoadProject: (project: GeneratedProject) => void;
+  onDownload: (path: string, filename: string) => Promise<void>;
 }
 
-export function ProjectsHistoryPage({ onLoadProject }: ProjectsHistoryPageProps) {
+export function ProjectsHistoryPage({ onLoadProject, onDownload }: ProjectsHistoryPageProps) {
   const [rows, setRows] = useState<ProjectHistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,10 +68,10 @@ export function ProjectsHistoryPage({ onLoadProject }: ProjectsHistoryPageProps)
                 <button className="secondary-button" type="button" onClick={() => loadProject(row.project_id)}>
                   Открыть
                 </button>
-                {row.download_url ? (
-                  <a className="primary-link" href={buildDownloadUrl(row.download_url)}>
+                {row.download_url && row.excel_filename ? (
+                  <button className="primary-link" type="button" onClick={() => onDownload(row.download_url as string, row.excel_filename as string)}>
                     Скачать Excel
-                  </a>
+                  </button>
                 ) : null}
               </div>
             </article>

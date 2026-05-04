@@ -17,6 +17,22 @@ class ProjectRequest(ProjectInput):
     """Project input payload accepted by the React frontend."""
 
 
+class LoginRequest(BaseModel):
+    login: str
+    password: str
+
+
+class AuthUser(BaseModel):
+    login: str
+    role: str
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: AuthUser
+
+
 class ProjectSummary(BaseModel):
     project_name: str | None = None
     city: str | None = None
