@@ -166,3 +166,4 @@ class GeneratedModel(BaseModel):
     risks: list[dict[str, Any]]
     trace: list[dict[str, Any]]
     output_filename: str | None = None
+    project_metadata: dict[str, Any] | None = None

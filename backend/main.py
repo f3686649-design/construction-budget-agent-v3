@@ -4,9 +4,14 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.requests import Request
+from fastapi.responses import FileResponse, JSONResponse
 
+from backend.api.routes import router as api_router
 from backend.models import GeneratedModel, ProjectInput
+from backend.project_history import save_project_metadata
 from backend.tools.assumptions_engine import apply_assumptions
 from backend.tools.budget_generator import generate_budget
 from backend.tools.cashflow_model import build_operations, generate_cashflow
@@ -32,6 +37,28 @@ from backend.tools.sales_plan_generator import generate_sales_plan
 
 OUTPUT_DIR = Path(__file__).resolve().parent / "storage" / "outputs"
 app = FastAPI(title="Агент строительного бюджета v3", version="3.0.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.include_router(api_router)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    fields: list[str] = []
+    for error in exc.errors():
+        location = error.get("loc", [])
+        field = ".".join(str(part) for part in location if part not in ("body", "query", "path"))
+        if field:
+            fields.append(field)
+    message = "Некорректные параметры проекта."
+    if fields:
+        message = f"{message} Проверьте поля: {', '.join(sorted(set(fields)))}."
+    return JSONResponse(status_code=422, content={"detail": message})
 
 
 @app.get("/health")
@@ -44,6 +71,7 @@ def generate_model(project_input: ProjectInput) -> dict[str, Any]:
     model = build_financial_model(project_input)
     excel_path = export_model_to_excel(model, OUTPUT_DIR)
     model["output_filename"] = excel_path.name
+    model["project_metadata"] = save_project_metadata(model=model, excel_path=excel_path, username="api")
     return GeneratedModel(**model).model_dump()
 
 

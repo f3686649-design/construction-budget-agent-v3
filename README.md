@@ -1,45 +1,142 @@
 # Construction Budget Agent v3
 
-Construction Budget Agent v3 generates a developer financial model from core project parameters. It does not read legacy Excel files: the model is built from assumptions, market norms, and the user input.
+ИИ-агент девелоперской финансовой модели. Пользователь вводит ключевые параметры проекта, а система формирует бюджет, детальную структуру затрат, ГПР, продажи, кредит, ДДС, DSCR, сценарии, оптимизацию и Excel-модель.
 
-## What It Generates
-
-- Project assumptions and TEP
-- Budget: land, CMR, design, technical customer, general contractor, networks, landscaping, reserve
-- Detailed ModDEV-style budget by chapters, articles, materials, works, machinery, and overheads
-- Technology-aware budget adjustments for foundation type, underground part, finish level, design cost, and site preparation
-- CMR split: materials, works, machinery, overheads, reserve
-- Developer-ready construction GPR with stage schedule, monthly CAPEX, cumulative CAPEX, and readiness
-- Supply plan for concrete, rebar, facade materials, and engineering equipment
-- Sales plan with slow start, mid-period peak, and final tail
-- Credit schedule with drawdown, interest, repayment, closing balance
-- Cashflow, DSCR, economics, risks
-- Scenario analysis, market-price optimization, and an automatic project improvement plan
-- Excel workbook with sheets `01_Вводные` through `17_Свод`
-
-## Optimization And Improvement Plan
-
-The agent now checks whether the project passes at the market sale price and then builds a practical improvement plan. It shows the required budget reduction, target CMR per m², required sellable area, value-engineering items, planning improvements, sales actions, financing actions, and 5–7 priority actions for the developer.
-
-## Run API
-
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload --port 8001
-```
-
-Endpoints:
-
-- `GET /health`
-- `POST /generate-model`
-- `GET /download/{filename}`
-
-## Run Streamlit
+## Как запустить приложение
 
 ```powershell
 .\.venv\Scripts\streamlit.exe run app.py
 ```
 
-## Test
+Перед первым входом администратор должен добавить пользователя в `users.json`. Пароли хранятся только в виде PBKDF2-хэша.
+
+После запуска откроется кабинет с боковым меню:
+
+- Главная
+- Новый расчёт
+- Бюджет
+- ГПР
+- Продажи
+- Кредит и ДДС
+- DSCR
+- Сценарии
+- Оптимизация
+- План улучшений
+- История проектов
+- Скачать Excel
+- Настройки
+
+## Как пользоваться
+
+1. Откройте раздел `Новый расчёт`.
+2. Заполните основные параметры проекта: название, город, тип и класс объекта, площади, этажность, сроки.
+3. При необходимости задайте ручные корректировки бюджета, свай, инженерии и финансирования.
+4. Нажмите `Сформировать финансовую модель`.
+5. Расчёт автоматически сохранится в историю проектов.
+6. Перейдите по разделам кабинета, чтобы посмотреть бюджет, ГПР, продажи, кредит, DSCR, сценарии и план улучшений.
+7. В разделе `Скачать Excel` выгрузите готовую финансовую модель.
+
+## Какие поля можно оставлять пустыми
+
+Можно оставить пустыми или равными `0`:
+
+- Цена продажи м²: агент рассчитает рекомендованную цену.
+- Цена генподряда м² и стоимость строительства м²: агент рассчитает себестоимость.
+- Проектирование и подготовительные работы: будут применены нормативы.
+- Ставки свайного основания, конструкций, отделки и инженерии: будут применены оптимизированные нормативы.
+- Доля кредита, ставка кредита, сроки строительства и продаж: будут применены допущения модели.
+
+Обязательные поля в интерфейсе:
+
+- Название проекта
+- Город
+- Тип объекта
+- Класс объекта
+- Общая площадь
+- Продаваемая площадь
+- Этажность
+
+## Что формирует агент
+
+- Вводные и допущения
+- ТЭП
+- Детальный бюджет по главам и статьям
+- Разбивку на материалы, работы, механизмы и накладные
+- График производства работ
+- План продаж
+- Кредитный график
+- ДДС
+- DSCR
+- Экономику проекта
+- Риски
+- Сценарии
+- Оптимизацию до рыночной цены
+- Автоматический план улучшений
+- Excel-файл с листами `01_Вводные` ... `17_Свод`
+
+## Где сохраняются Excel-файлы
+
+Excel-файлы сохраняются в папке:
+
+```text
+backend/storage/outputs
+```
+
+История проектов и `metadata.json` сохраняются в папке:
+
+```text
+backend/storage/projects
+```
+
+Скачать последний расчёт можно в интерфейсе в разделе `Скачать Excel`.
+
+## Авторизация
+
+Файл пользователей:
+
+```text
+users.json
+```
+
+Чтобы создать хэш пароля:
+
+```powershell
+.\.venv\Scripts\python.exe -c "from backend.auth import hash_password; print(hash_password('НОВЫЙ_ПАРОЛЬ'))"
+```
+
+Роли пользователей: `admin` и `user`.
+
+## Как запустить API
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload --port 8001
+```
+
+Доступные endpoints:
+
+- `GET /health`
+- `POST /generate-model`
+- `GET /download/{filename}`
+- `GET /api/health`
+- `POST /api/generate-model`
+- `GET /api/projects`
+- `GET /api/projects/{project_id}`
+- `GET /api/download/{filename}`
+
+React-приложение можно подключать к `/api/*`. Для Vite dev server уже разрешены CORS-источники:
+
+- `http://localhost:5173`
+- `http://127.0.0.1:5173`
+
+Новый API сохраняет каждый расчёт в:
+
+```text
+backend/storage/projects/{project_id}
+```
+
+Внутри папки проекта создаются `input.json`, `result.json`, `metadata.json` и Excel-файл.
+
+## Как запустить тесты
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest

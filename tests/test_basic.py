@@ -1,12 +1,97 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import shutil
+import uuid
+from contextlib import contextmanager
+from pathlib import Path
+
 import pytest
 from openpyxl import load_workbook
 
-from backend.main import OUTPUT_DIR, build_financial_model, generate_model, health
+from backend.auth import authenticate_user, hash_password
+from backend.main import OUTPUT_DIR, app, build_financial_model, generate_model, health
 from backend.models import ProjectInput
+from backend.project_history import PROJECTS_DIR, load_project_history, metadata_path_for_project, save_project_metadata
 from backend.tools.cmr_splitter import split_cmr
 from backend.tools.excel_exporter import export_model_to_excel
+
+
+@contextmanager
+def workspace_tmp_dir():
+    path = Path("test-artifacts") / uuid.uuid4().hex
+    path.mkdir(parents=True, exist_ok=False)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def cleanup_project(project_id: str | None) -> None:
+    if project_id:
+        shutil.rmtree(PROJECTS_DIR / project_id, ignore_errors=True)
+
+
+class ASGIResponse:
+    def __init__(self, status_code: int, headers: dict[str, str], content: bytes) -> None:
+        self.status_code = status_code
+        self.headers = headers
+        self.content = content
+
+    def json(self) -> dict | list:
+        return json.loads(self.content.decode("utf-8"))
+
+
+def api_request(method: str, path: str, json_body: dict | None = None) -> ASGIResponse:
+    return asyncio.run(_api_request(method, path, json_body))
+
+
+async def _api_request(method: str, path: str, json_body: dict | None = None) -> ASGIResponse:
+    body = b""
+    headers = [(b"host", b"testserver")]
+    if json_body is not None:
+        body = json.dumps(json_body).encode("utf-8")
+        headers.append((b"content-type", b"application/json"))
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": method.upper(),
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode("utf-8"),
+        "query_string": b"",
+        "headers": headers,
+        "client": ("testclient", 50000),
+        "server": ("testserver", 80),
+        "root_path": "",
+    }
+    received = False
+    response_status = 500
+    response_headers: dict[str, str] = {}
+    response_body = bytearray()
+
+    async def receive() -> dict:
+        nonlocal received
+        if received:
+            return {"type": "http.disconnect"}
+        received = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    async def send(message: dict) -> None:
+        nonlocal response_status, response_headers
+        if message["type"] == "http.response.start":
+            response_status = message["status"]
+            response_headers = {
+                key.decode("latin-1").lower(): value.decode("latin-1")
+                for key, value in message.get("headers", [])
+            }
+        elif message["type"] == "http.response.body":
+            response_body.extend(message.get("body", b""))
+
+    await app(scope, receive, send)
+    return ASGIResponse(response_status, response_headers, bytes(response_body))
 
 
 def _minimal_model() -> dict:
@@ -65,6 +150,39 @@ def test_health_works() -> None:
     assert health() == {"status": "ok"}
 
 
+def test_api_health_works() -> None:
+    response = api_request("GET", "/api/health")
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "app": "Construction Budget Agent",
+        "version": "3",
+    }
+
+
+def test_user_can_login() -> None:
+    with workspace_tmp_dir() as tmp_dir:
+        users_file = tmp_dir / "users.json"
+        users_file.write_text(
+            json.dumps(
+                {
+                    "users": [
+                        {
+                            "login": "ivan",
+                            "password_hash": hash_password("secure-password", salt="test-salt"),
+                            "role": "user",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        user = authenticate_user("ivan", "secure-password", users_file=users_file)
+        assert user == {"login": "ivan", "role": "user"}
+        assert authenticate_user("ivan", "wrong-password", users_file=users_file) is None
+
+
 def test_model_is_created_from_minimal_data() -> None:
     payload = generate_model(ProjectInput(project_name="Минимальный проект"))
     assert payload["status"] == "ok"
@@ -83,12 +201,128 @@ def test_excel_is_saved() -> None:
     payload = generate_model(ProjectInput(project_name="Excel test"))
     filename = payload["output_filename"]
     output_path = OUTPUT_DIR / filename
+    project_id = (payload.get("project_metadata") or {}).get("project_id")
     try:
         assert output_path.exists()
         assert output_path.suffix == ".xlsx"
+        assert project_id
     finally:
         for path in set(OUTPUT_DIR.glob("*.xlsx")) - before:
             path.unlink(missing_ok=True)
+        if project_id:
+            shutil.rmtree(PROJECTS_DIR / project_id, ignore_errors=True)
+
+
+def test_api_generate_model_creates_project() -> None:
+    response = api_request(
+        "POST",
+        "/api/generate-model",
+        {
+            "project_name": "API project",
+            "city": "Якутск",
+            "total_area": 6_666,
+            "sellable_area": 5_200,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    project_id = payload["project_id"]
+    try:
+        assert project_id
+        assert payload["summary"]["total_budget"] > 0
+        assert payload["excel_filename"].endswith(".xlsx")
+        assert payload["download_url"] == f"/api/download/{payload['excel_filename']}"
+        project_dir = PROJECTS_DIR / project_id
+        assert (project_dir / "input.json").exists()
+        assert (project_dir / "result.json").exists()
+        assert (project_dir / "metadata.json").exists()
+        assert (project_dir / payload["excel_filename"]).exists()
+    finally:
+        cleanup_project(project_id)
+
+
+def test_api_projects_returns_history() -> None:
+    generated = api_request("POST", "/api/generate-model", {"project_name": "History API project"})
+    assert generated.status_code == 200
+    project_id = generated.json()["project_id"]
+    try:
+        response = api_request("GET", "/api/projects")
+        assert response.status_code == 200
+        rows = response.json()
+        assert any(row["project_id"] == project_id for row in rows)
+    finally:
+        cleanup_project(project_id)
+
+
+def test_api_project_returns_full_result() -> None:
+    generated = api_request("POST", "/api/generate-model", {"project_name": "Full result API project"})
+    assert generated.status_code == 200
+    project_id = generated.json()["project_id"]
+    try:
+        response = api_request("GET", f"/api/projects/{project_id}")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["project_id"] == project_id
+        assert payload["budget"]["total_budget"] > 0
+        assert payload["input"]["project_name"] == "Full result API project"
+    finally:
+        cleanup_project(project_id)
+
+
+def test_api_download_returns_excel_file() -> None:
+    generated = api_request("POST", "/api/generate-model", {"project_name": "Download API project"})
+    assert generated.status_code == 200
+    payload = generated.json()
+    project_id = payload["project_id"]
+    try:
+        response = api_request("GET", payload["download_url"])
+        assert response.status_code == 200
+        assert response.content.startswith(b"PK")
+        assert "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" in response.headers["content-type"]
+    finally:
+        cleanup_project(project_id)
+
+
+def test_project_calculation_is_saved_to_history() -> None:
+    with workspace_tmp_dir() as tmp_dir:
+        model = _minimal_model()
+        excel_path = export_model_to_excel(model, tmp_dir)
+        projects_dir = tmp_dir / "projects"
+        metadata = save_project_metadata(model=model, excel_path=excel_path, username="ivan", projects_dir=projects_dir)
+        metadata_path = metadata_path_for_project(metadata["project_id"], projects_dir)
+
+        assert metadata_path.exists()
+        saved_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        assert saved_metadata["project_id"] == metadata["project_id"]
+        assert saved_metadata["user"] == "ivan"
+        assert saved_metadata["project_name"] == model["input"]["project_name"]
+        assert saved_metadata["total_budget"] == pytest.approx(model["budget"]["total_budget"])
+
+
+def test_excel_from_history_is_available_for_download() -> None:
+    with workspace_tmp_dir() as tmp_dir:
+        model = _minimal_model()
+        excel_path = export_model_to_excel(model, tmp_dir)
+        metadata = save_project_metadata(model=model, excel_path=excel_path, username="ivan", projects_dir=tmp_dir / "projects")
+        saved_excel_path = metadata["excel_path"]
+
+        assert saved_excel_path
+        with open(saved_excel_path, "rb") as handle:
+            content = handle.read()
+        assert len(content) > 0
+
+
+def test_metadata_json_is_created_and_history_loads() -> None:
+    with workspace_tmp_dir() as tmp_dir:
+        model = _minimal_model()
+        excel_path = export_model_to_excel(model, tmp_dir)
+        projects_dir = tmp_dir / "projects"
+        metadata = save_project_metadata(model=model, excel_path=excel_path, username="admin", projects_dir=projects_dir)
+        history = load_project_history(projects_dir)
+
+        assert (projects_dir / metadata["project_id"] / "metadata.json").exists()
+        assert len(history) == 1
+        assert history[0]["project_id"] == metadata["project_id"]
 
 
 def test_gpr_sum_equals_budget() -> None:
