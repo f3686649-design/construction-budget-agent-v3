@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: construction-budget-agent-v3
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile.render
+    envVars:
+      - key: APP_ADMIN_USERNAME
+        value: admin
+      - key: APP_ADMIN_PASSWORD
+        sync: false
+      - key: APP_ADMIN_ROLE
+        value: admin
+      - key: AUTH_SECRET
+        generateValue: true

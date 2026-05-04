@@ -38,6 +38,20 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
+def create_user_record(username: str, password: str, role: str = "user") -> dict[str, str]:
+    login = username.strip()
+    normalized_role = role.strip().lower() or "user"
+    if not login:
+        raise ValueError("Логин не может быть пустым.")
+    if normalized_role not in {"admin", "user"}:
+        raise ValueError("Роль пользователя должна быть admin или user.")
+    return {
+        "login": login,
+        "password_hash": hash_password(password),
+        "role": normalized_role,
+    }
+
+
 def load_users(users_file: Path = USERS_FILE) -> list[dict[str, Any]]:
     if not users_file.exists():
         return []
