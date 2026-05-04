@@ -1,98 +1,9 @@
 # Внедрение Construction Budget Agent v3
 
-## 1. Первый запуск локально
+Docker-версия теперь использует вариант C: React frontend + FastAPI backend.
+Старая Streamlit-версия в Docker больше не запускается.
 
-Установите зависимости и запустите приложение:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\run_local.ps1
-```
-
-После запуска откройте:
-
-```text
-http://localhost:8501
-```
-
-## 2. Пользователи и пароли
-
-Пользователи хранятся в файле:
-
-```text
-users.json
-```
-
-Пароли нельзя хранить открытым текстом. Чтобы создать хэш пароля:
-
-```powershell
-.\.venv\Scripts\python.exe -c "from backend.auth import hash_password; print(hash_password('НОВЫЙ_ПАРОЛЬ'))"
-```
-
-Добавьте пользователя в `users.json`:
-
-```json
-{
-  "users": [
-    {
-      "login": "ivan",
-      "password_hash": "pbkdf2_sha256$...",
-      "role": "user"
-    }
-  ]
-}
-```
-
-Роли:
-
-- `admin`: администратор.
-- `user`: обычный пользователь.
-
-## 3. Запуск в офисной сети
-
-Запустите приложение на компьютере, который будет сервером:
-
-```powershell
-.\run_local.ps1
-```
-
-Приложение будет доступно на порту `8501`.
-
-## 4. Как узнать IP сервера
-
-В PowerShell выполните:
-
-```powershell
-ipconfig
-```
-
-Найдите IPv4-адрес в активном сетевом адаптере, например:
-
-```text
-192.168.1.25
-```
-
-Ссылка для коллег:
-
-```text
-http://192.168.1.25:8501
-```
-
-## 5. Как открыть порт в Windows Firewall
-
-Запустите PowerShell от имени администратора:
-
-```powershell
-New-NetFirewallRule -DisplayName "Construction Budget Agent v3" -Direction Inbound -Protocol TCP -LocalPort 8501 -Action Allow
-```
-
-Если нужно закрыть доступ:
-
-```powershell
-Remove-NetFirewallRule -DisplayName "Construction Budget Agent v3"
-```
-
-## 6. Запуск через Docker
+## 1. Запуск через Docker
 
 Создайте `.env` из примера:
 
@@ -100,25 +11,98 @@ Remove-NetFirewallRule -DisplayName "Construction Budget Agent v3"
 Copy-Item .env.example .env
 ```
 
-Запустите контейнер:
+Запустите два контейнера:
 
 ```powershell
-docker compose up --build -d
+docker compose up -d --build
 ```
 
-Откройте:
+После запуска откройте:
 
 ```text
-http://localhost:8501
+http://localhost
 ```
 
-Остановить:
+Проверка API:
+
+```text
+http://localhost/api/health
+```
+
+Backend дополнительно доступен напрямую:
+
+```text
+http://localhost:8000/api/health
+```
+
+## 2. Если порт 80 занят
+
+Откройте `.env` и замените:
+
+```text
+FRONTEND_PORT=80
+```
+
+на:
+
+```text
+FRONTEND_PORT=8080
+```
+
+Перезапустите контейнеры:
 
 ```powershell
-docker compose down
+docker compose up -d --build
 ```
 
-## 7. Где хранятся файлы
+После этого frontend будет доступен по адресу:
+
+```text
+http://localhost:8080
+```
+
+API через nginx будет работать так:
+
+```text
+http://localhost:8080/api/health
+```
+
+## 3. Состав контейнеров
+
+`backend`:
+
+- собирается через `Dockerfile.backend`;
+- запускает FastAPI командой `uvicorn backend.main:app --host 0.0.0.0 --port 8000`;
+- публикует порт `8000:8000`;
+- сохраняет файлы в volume-папки проекта.
+
+`frontend`:
+
+- собирается через `Dockerfile.frontend`;
+- выполняет production build React/Vite;
+- отдаёт `dist` через nginx;
+- публикует порт `80:80`;
+- проксирует `/api/*` на `backend:8000`.
+
+## 4. Переменные окружения
+
+Файл `.env.example`:
+
+```text
+BACKEND_PORT=8000
+FRONTEND_PORT=80
+VITE_API_BASE_URL=/api
+```
+
+Для офисной сети обычно достаточно менять только `FRONTEND_PORT`, если порт `80` занят.
+
+## 5. Где хранятся файлы
+
+История проектов:
+
+```text
+backend/storage/projects
+```
 
 Excel-файлы:
 
@@ -126,38 +110,82 @@ Excel-файлы:
 backend/storage/outputs
 ```
 
-История проектов и metadata:
+Загрузки пользователя:
+
+```text
+backend/storage/uploads
+```
+
+Каждый расчёт API сохраняется в:
+
+```text
+backend/storage/projects/{project_id}
+```
+
+Внутри папки проекта:
+
+- `input.json`
+- `result.json`
+- `metadata.json`
+- Excel-файл
+
+## 6. Резервная копия
+
+Регулярно копируйте:
 
 ```text
 backend/storage/projects
-```
-
-Каждый расчёт сохраняется в отдельной папке с `metadata.json` и копией Excel-файла.
-
-## 8. Резервная копия
-
-Рекомендуется регулярно копировать:
-
-```text
-users.json
 backend/storage/outputs
-backend/storage/projects
+backend/storage/uploads
+users.json
 ```
 
-Пример резервной копии:
+Пример:
 
 ```powershell
 $Date = Get-Date -Format "yyyyMMdd_HHmm"
 New-Item -ItemType Directory -Force -Path ".\backup\$Date"
-Copy-Item ".\users.json" ".\backup\$Date\users.json"
-Copy-Item ".\backend\storage\outputs" ".\backup\$Date\outputs" -Recurse
 Copy-Item ".\backend\storage\projects" ".\backup\$Date\projects" -Recurse
+Copy-Item ".\backend\storage\outputs" ".\backup\$Date\outputs" -Recurse
+Copy-Item ".\backend\storage\uploads" ".\backup\$Date\uploads" -Recurse
+Copy-Item ".\users.json" ".\backup\$Date\users.json"
 ```
 
-## 9. Проверка перед запуском для коллег
+## 7. Запуск без Docker для разработки
+
+Backend:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload --port 8000
+```
+
+Frontend:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend будет доступен на:
+
+```text
+http://localhost:5173
+```
+
+Vite проксирует `/api` на `http://localhost:8000`.
+
+## 8. Проверка перед внедрением
+
+Backend:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-Если тесты проходят, приложение готово к демонстрации и внутреннему использованию.
+Frontend:
+
+```powershell
+cd frontend
+npm run build
+```

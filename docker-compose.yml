@@ -1,11 +1,26 @@
 services:
-  construction-budget-agent-v3:
-    build: .
-    container_name: construction-budget-agent-v3
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: construction-budget-agent-backend
     ports:
-      - "${STREAMLIT_PORT:-8501}:8501"
+      - "${BACKEND_PORT:-8000}:8000"
     volumes:
-      - ./users.json:/app/users.json
-      - ./backend/storage/outputs:/app/backend/storage/outputs
       - ./backend/storage/projects:/app/backend/storage/projects
+      - ./backend/storage/outputs:/app/backend/storage/outputs
+      - ./backend/storage/uploads:/app/backend/storage/uploads
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    container_name: construction-budget-agent-frontend
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
     restart: unless-stopped
