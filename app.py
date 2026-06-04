@@ -16,7 +16,7 @@ from backend.tools.excel_exporter import export_model_to_excel
 
 st.set_page_config(page_title="ИИ-агент девелоперской модели", layout="wide")
 
-APP_VERSION = os.getenv("APP_VERSION", "3.0.0")
+APP_VERSION = os.getenv("APP_VERSION", "3.1.0")
 
 
 MENU_ITEMS = (
@@ -26,6 +26,9 @@ MENU_ITEMS = (
     "ГПР",
     "Продажи",
     "Кредит и ДДС",
+    "Банк",
+    "ТУ и сети",
+    "Заключение ИИ",
     "DSCR",
     "Сценарии",
     "Оптимизация",
@@ -302,8 +305,38 @@ def show_home() -> None:
         return
     st.subheader(current_model["input"].get("project_name") or "Текущий расчёт")
     dashboard_cards(current_model)
+    show_land_verdict(current_model)
     st.divider()
     show_overview_charts(current_model)
+
+
+def show_land_verdict(current_model: dict[str, Any]) -> None:
+    _show_verdict_line("Оценка земли", current_model.get("land_valuation"))
+    land = current_model.get("land_valuation") or {}
+    if land.get("verdict"):
+        st.caption(
+            "Остаточный метод · "
+            f"максимально обоснованная цена: {format_rub(land.get('max_land_price'))} · "
+            f"безубыточная: {format_rub(land.get('break_even_land_price'))} · "
+            f"целевая маржа: {format_percent(land.get('target_margin'))}"
+        )
+    _show_verdict_line("Банк", current_model.get("bank_approval"))
+    _show_verdict_line("Техприсоединение", current_model.get("tech_connection"))
+
+
+def _show_verdict_line(title: str, block: dict[str, Any] | None) -> None:
+    if not block or not block.get("verdict"):
+        return
+    level = block.get("verdict_level")
+    verdict = f"{title}: {block['verdict']}"
+    if level == "critical":
+        st.error(verdict)
+    elif level == "warning":
+        st.warning(verdict)
+    elif level == "ok":
+        st.success(verdict)
+    else:
+        st.info(verdict)
 
 
 def show_overview_charts(current_model: dict[str, Any]) -> None:
@@ -351,6 +384,7 @@ def show_new_calculation() -> None:
             sellable_area = st.number_input("Продаваемая площадь", min_value=0.0, value=0.0, step=100.0)
         with col2:
             floors = st.number_input("Этажность", min_value=0, value=0, step=1)
+            apartments_count = st.number_input("Количество квартир, необязательно", min_value=0, value=0, step=1)
             sellable_finish_label = st.selectbox(
                 "Уровень отделки реализуемых помещений",
                 list(FINISH_LABEL_TO_VALUE),
@@ -368,6 +402,9 @@ def show_new_calculation() -> None:
         with col2:
             external_networks_included = st.selectbox("Наружные сети включены?", ["нет", "да"]) == "да"
             gas_only_cooking = st.selectbox("Газ только пищеприготовление?", ["да", "нет"]) == "да"
+            tp_total_cost_override = st.number_input(
+                "Плата за техприсоединение по ТУ, ₽ (необязательно)", min_value=0.0, value=0.0, step=500_000.0
+            )
         with col3:
             construction_months = st.number_input("Срок строительства", min_value=0, value=0, step=1)
             sales_months = st.number_input("Срок продаж", min_value=0, value=0, step=1)
@@ -443,6 +480,8 @@ def show_new_calculation() -> None:
             total_area=optional_number(total_area),
             sellable_area=optional_number(sellable_area),
             floors=optional_int(floors),
+            apartments_count=optional_int(apartments_count),
+            tp_total_cost_override=optional_number(tp_total_cost_override),
             sale_price_per_m2=optional_number(sale_price_per_m2),
             construction_cost_per_m2=optional_number(construction_cost_per_m2),
             gp_contract_price_per_m2=optional_number(gp_contract_price_per_m2),
@@ -720,6 +759,225 @@ def format_cashflow_table(rows: list[dict[str, Any]]) -> pd.DataFrame:
     )
 
 
+def show_bank() -> None:
+    st.header("Банковское проектное финансирование (эскроу, 214-ФЗ)")
+    current_model = require_model()
+    if current_model is None:
+        return
+    bank = current_model.get("bank_approval") or {}
+    escrow = current_model.get("escrow_financing") or {}
+    if not bank:
+        st.info("Банковская оценка появится после нового расчёта.")
+        return
+
+    level = bank.get("verdict_level")
+    verdict = str(bank.get("verdict") or "")
+    if level == "critical":
+        st.error(verdict)
+    elif level == "warning":
+        st.warning(verdict)
+    else:
+        st.success(verdict)
+
+    metrics = (
+        ("Собственное участие", format_percent(escrow.get("equity_share"))),
+        ("LLCR", format_number(escrow.get("llcr"), 2) if escrow.get("llcr") is not None else "нет долга"),
+        (
+            "Покрытие эскроу на вводе",
+            format_percent(escrow.get("escrow_coverage_at_delivery"))
+            if escrow.get("escrow_coverage_at_delivery") is not None
+            else "нет долга",
+        ),
+        ("Пиковый долг", format_rub(escrow.get("max_debt"))),
+        ("Проценты (эскроу-модель)", format_rub(escrow.get("total_interest"))),
+        ("Прибыль (эскроу-модель)", format_rub(escrow.get("profit"))),
+    )
+    for row_start in range(0, len(metrics), 3):
+        columns = st.columns(3)
+        for column, (label, value) in zip(columns, metrics[row_start : row_start + 3], strict=False):
+            with column:
+                metric_card(label, value)
+
+    st.subheader("Критерии банка")
+    criteria = bank.get("criteria") or []
+    if criteria:
+        criteria_df = pd.DataFrame(
+            [
+                {
+                    "Критерий": row.get("name"),
+                    "Порог": row.get("threshold"),
+                    "Факт": row.get("actual"),
+                    "Статус": row.get("status"),
+                    "Комментарий": row.get("comment"),
+                }
+                for row in criteria
+            ]
+        )
+        st.dataframe(criteria_df, use_container_width=True, hide_index=True)
+
+    recommendations = bank.get("recommendations") or []
+    if recommendations:
+        show_text_list("Что нужно исправить", recommendations, numbered=True)
+
+    schedule = escrow.get("schedule") or []
+    if schedule:
+        st.subheader("Долг и эскроу по месяцам")
+        chart_df = pd.DataFrame(
+            {
+                "Месяц": [row["month"] for row in schedule],
+                "Долг": [row["debt_balance"] for row in schedule],
+                "Эскроу": [row["escrow_balance"] for row in schedule],
+            }
+        )
+        st.line_chart(chart_df, x="Месяц", y=["Долг", "Эскроу"], use_container_width=True)
+        st.subheader("График эскроу-финансирования")
+        schedule_df = pd.DataFrame(
+            [
+                {
+                    "Месяц": row.get("month"),
+                    "Затраты": row.get("construction_cost"),
+                    "Из собственных": row.get("equity_payment"),
+                    "Выборка кредита": row.get("drawdown"),
+                    "Проценты": row.get("interest"),
+                    "На эскроу": row.get("escrow_inflow"),
+                    "Остаток эскроу": row.get("escrow_balance"),
+                    "Раскрытие": row.get("escrow_release"),
+                    "Прямые поступления": row.get("direct_receipts"),
+                    "Погашение": row.get("repayment"),
+                    "Долг": row.get("debt_balance"),
+                }
+                for row in schedule
+            ]
+        )
+        st.dataframe(schedule_df, use_container_width=True, hide_index=True)
+
+
+def show_tech_connection() -> None:
+    st.header("Техническое присоединение (ТУ)")
+    current_model = require_model()
+    if current_model is None:
+        return
+    tech = current_model.get("tech_connection") or {}
+    if not tech:
+        st.info("Оценка техприсоединения появится после нового расчёта.")
+        return
+
+    level = tech.get("verdict_level")
+    verdict = str(tech.get("verdict") or "")
+    if level == "critical":
+        st.error(verdict)
+    elif level == "warning":
+        st.warning(verdict)
+    else:
+        st.success(verdict)
+    st.caption(f"{tech.get('cost_source', '')} · Квартир: {tech.get('apartments')} ({tech.get('apartments_source', '')})")
+
+    loads = tech.get("loads") or {}
+    metrics = (
+        ("Плата за ТП итого", format_rub(tech.get("total_cost"))),
+        ("Заложено в бюджете", format_rub(tech.get("budget_allocation"))),
+        ("Дефицит", format_rub(tech.get("deficit"))),
+        ("Электрическая мощность", f"{loads.get('power_kw', '—')} кВт"),
+        ("Тепловая нагрузка", f"{loads.get('heat_gcal_h', '—')} Гкал/ч"),
+        ("Сроки ТП / стройка", f"{tech.get('max_lead_time_months', '—')} / {tech.get('construction_months', '—')} мес"),
+    )
+    for row_start in range(0, len(metrics), 3):
+        columns = st.columns(3)
+        for column, (label, value) in zip(columns, metrics[row_start : row_start + 3], strict=False):
+            with column:
+                metric_card(label, value)
+
+    items = tech.get("items") or []
+    if items:
+        st.subheader("Ресурсы и стоимость присоединения")
+        items_df = pd.DataFrame(
+            [
+                {
+                    "Ресурс": row.get("resource"),
+                    "Нагрузка": row.get("load"),
+                    "Ед.": row.get("unit"),
+                    "Ставка, ₽/ед.": row.get("rate"),
+                    "Стоимость, ₽": row.get("cost"),
+                    "База расчёта": row.get("basis"),
+                    "Срок ТП, мес": row.get("lead_time_months"),
+                    "Вписывается в стройку": "да" if row.get("deadline_ok") else "НЕТ",
+                }
+                for row in items
+            ]
+        )
+        st.dataframe(items_df, use_container_width=True, hide_index=True)
+        st.caption("Ставки платы за ТП — усреднённые региональные допущения. Обязательно уточнить по фактическим ТУ ресурсоснабжающих организаций.")
+
+
+def show_ai_conclusion() -> None:
+    from backend.services.llm_service import ai_status, generate_ai_conclusion
+
+    st.header("Заключение ИИ")
+    current_model = require_model()
+    if current_model is None:
+        return
+
+    status = ai_status()
+    if status["configured"]:
+        st.caption(f"Провайдер: {status['provider']} · модель: {status['model']}")
+    else:
+        st.warning(status["detail"])
+
+    if st.button("Сформировать заключение", disabled=not status["configured"]):
+        with st.spinner("ИИ формирует аналитическую записку…"):
+            result = generate_ai_conclusion(current_model)
+        if result["status"] == "ok":
+            st.session_state["ai_conclusion"] = result
+        else:
+            st.error(result.get("error") or "Не удалось сформировать заключение.")
+
+    saved = st.session_state.get("ai_conclusion")
+    if saved and saved.get("conclusion"):
+        st.caption(f"Сформировано: {saved.get('generated_at')} · модель: {saved.get('model')}")
+        st.markdown(saved["conclusion"])
+    elif status["configured"]:
+        st.markdown(
+            '<div class="hint">ИИ получит все цифры и вердикты модели (земля, банк, ТУ, риски) '
+            "и напишет жёсткую аналитическую записку для инвестора и кредитного комитета.</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.divider()
+    st.subheader("Чат по проекту")
+    st.caption("Вопросы в свободной форме — ответы только по данным рассчитанной модели.")
+
+    chat_key = f"ai_chat_{current_model['input'].get('project_name') or 'project'}"
+    history = st.session_state.setdefault(chat_key, [])
+
+    for message in history:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    if history and st.button("Очистить чат"):
+        st.session_state[chat_key] = []
+        st.rerun()
+
+    question = st.chat_input(
+        "Задайте вопрос по проекту…" if status["configured"] else "Чат недоступен: не задан OPENAI_API_KEY",
+        disabled=not status["configured"],
+    )
+    if question:
+        from backend.services.llm_service import chat_about_project
+
+        with st.chat_message("user"):
+            st.markdown(question)
+        with st.chat_message("assistant"):
+            with st.spinner("ИИ думает…"):
+                result = chat_about_project(current_model, question, history)
+            if result["status"] == "ok" and result.get("answer"):
+                st.markdown(result["answer"])
+                history.append({"role": "user", "content": question})
+                history.append({"role": "assistant", "content": result["answer"]})
+                st.session_state[chat_key] = history
+            else:
+                st.error(result.get("error") or "Не удалось получить ответ.")
+
+
 def show_dscr() -> None:
     current_model = require_model()
     if current_model is None:
@@ -991,6 +1249,9 @@ def main() -> None:
         "ГПР": show_gpr,
         "Продажи": show_sales,
         "Кредит и ДДС": show_credit_cashflow,
+        "Банк": show_bank,
+        "ТУ и сети": show_tech_connection,
+        "Заключение ИИ": show_ai_conclusion,
         "DSCR": show_dscr,
         "Сценарии": show_scenarios,
         "Оптимизация": show_optimization,

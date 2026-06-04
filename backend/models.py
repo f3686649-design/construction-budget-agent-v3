@@ -17,6 +17,8 @@ class ProjectInput(BaseModel):
     total_area: float | None = Field(default=None, ge=0)
     sellable_area: float | None = Field(default=None, ge=0)
     floors: int | None = Field(default=None, ge=0)
+    apartments_count: int | None = Field(default=None, ge=1)
+    tp_total_cost_override: float | None = Field(default=None, ge=0)
     sale_price_per_m2: float | None = Field(default=None, ge=0)
     construction_cost_per_m2: float | None = Field(default=None, ge=0)
     gp_contract_price_per_m2: float | None = Field(default=None, ge=0)
@@ -90,6 +92,10 @@ class EconomicsMetrics(BaseModel):
     minimum_dscr_after_sales_start: float | None = None
     average_dscr_after_sales_start: float | None = None
     months_below_1_2: int = 0
+    llcr: float | None = None
+    escrow_coverage_at_delivery: float | None = None
+    escrow_total_interest: float | None = None
+    bank_verdict_code: str | None = None
     roi_on_budget: float = 0
     profit: float | None = None
     margin: float | None = None
@@ -155,6 +161,10 @@ class GeneratedModel(BaseModel):
     cashflow: list[dict[str, Any]]
     dscr: dict[str, Any]
     economics: EconomicsMetrics
+    land_valuation: dict[str, Any] = Field(default_factory=dict)
+    escrow_financing: dict[str, Any] = Field(default_factory=dict)
+    bank_approval: dict[str, Any] = Field(default_factory=dict)
+    tech_connection: dict[str, Any] = Field(default_factory=dict)
     detailed_budget: dict[str, Any]
     work_schedule: dict[str, Any]
     gpr_summary: dict[str, Any]

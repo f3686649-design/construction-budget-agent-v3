@@ -1,4 +1,4 @@
-import type { AuthSession, AuthUser, GeneratedProject, ProjectHistoryItem, ProjectInput } from "../types";
+import type { AuthSession, AuthUser, GeneratedProject, ProjectHistoryItem, ProjectInput, AiStatus, AiConclusion, AiChatMessage, AiChatResponse, BillingInfo, PaymentResult } from "../types";
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 const AUTH_STORAGE_KEY = "construction_budget_agent_auth";
@@ -57,6 +57,40 @@ export async function generateModel(input: ProjectInput): Promise<GeneratedProje
 
 export async function getProjects(): Promise<ProjectHistoryItem[]> {
   return request("/projects");
+}
+
+export async function getBilling(): Promise<BillingInfo> {
+  return request<BillingInfo>("/billing");
+}
+
+export async function createPayment(plan: string, returnUrl?: string): Promise<PaymentResult> {
+  return request<PaymentResult>("/billing/create-payment", {
+    method: "POST",
+    body: JSON.stringify({ plan, return_url: returnUrl })
+  });
+}
+
+export async function getAiStatus(): Promise<AiStatus> {
+  return request<AiStatus>("/ai/status");
+}
+
+export async function getAiConclusion(projectId: string): Promise<AiConclusion> {
+  return request<AiConclusion>(`/projects/${projectId}/ai-conclusion`);
+}
+
+export async function aiChat(
+  projectId: string,
+  question: string,
+  history: AiChatMessage[]
+): Promise<AiChatResponse> {
+  return request<AiChatResponse>(`/projects/${projectId}/ai-chat`, {
+    method: "POST",
+    body: JSON.stringify({ question, history })
+  });
+}
+
+export async function generateAiConclusion(projectId: string): Promise<AiConclusion> {
+  return request<AiConclusion>(`/projects/${projectId}/ai-conclusion`, { method: "POST" });
 }
 
 export async function getProject(projectId: string): Promise<GeneratedProject> {

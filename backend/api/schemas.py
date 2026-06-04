@@ -43,6 +43,18 @@ class ProjectSummary(BaseModel):
     minimum_dscr: float | None = None
     total_equity_required: float = 0
     max_credit_balance: float = 0
+    max_land_price: float | None = None
+    land_verdict: str | None = None
+    land_verdict_level: str | None = None
+    llcr: float | None = None
+    escrow_coverage_at_delivery: float | None = None
+    bank_verdict: str | None = None
+    bank_verdict_code: str | None = None
+    bank_verdict_level: str | None = None
+    tech_connection_cost: float | None = None
+    tech_connection_deficit: float | None = None
+    tech_connection_verdict: str | None = None
+    tech_connection_verdict_level: str | None = None
 
 
 class GenerateModelResponse(BaseModel):
@@ -57,6 +69,10 @@ class GenerateModelResponse(BaseModel):
     cashflow: list[dict[str, Any]]
     dscr: dict[str, Any]
     economics: dict[str, Any]
+    land_valuation: dict[str, Any] = Field(default_factory=dict)
+    escrow_financing: dict[str, Any] = Field(default_factory=dict)
+    bank_approval: dict[str, Any] = Field(default_factory=dict)
+    tech_connection: dict[str, Any] = Field(default_factory=dict)
     risks: list[dict[str, Any]]
     scenarios: list[dict[str, Any]]
     optimization: dict[str, Any]
@@ -78,6 +94,16 @@ class ProjectHistoryItem(BaseModel):
     minimum_dscr: float | None = None
     excel_filename: str | None = None
     download_url: str | None = None
+
+
+class AiChatMessage(BaseModel):
+    role: str = Field(..., pattern="^(user|assistant)$")
+    content: str = Field(..., min_length=1, max_length=4000)
+
+
+class AiChatRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=2000)
+    history: list[AiChatMessage] = Field(default_factory=list, max_length=20)
 
 
 class ErrorResponse(BaseModel):

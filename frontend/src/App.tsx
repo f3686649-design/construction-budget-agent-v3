@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { checkHealth, clearAuthSession, downloadExcel, generateModel, getMe, getStoredAuth, login } from "./api/client";
 import { Layout } from "./components/Layout";
+import { AiConclusionPage } from "./pages/AiConclusionPage";
+import { BankPage } from "./pages/BankPage";
+import { BillingPage } from "./pages/BillingPage";
 import { BudgetPage } from "./pages/BudgetPage";
 import { CreditCashflowPage } from "./pages/CreditCashflowPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -13,6 +16,7 @@ import { OptimizationPage } from "./pages/OptimizationPage";
 import { ProjectsHistoryPage } from "./pages/ProjectsHistoryPage";
 import { SalesPage } from "./pages/SalesPage";
 import { ScenariosPage } from "./pages/ScenariosPage";
+import { TechConnectionPage } from "./pages/TechConnectionPage";
 import type { AuthSession, GeneratedProject, PageKey, ProjectInput } from "./types";
 
 function App() {
@@ -96,6 +100,10 @@ function App() {
     <Layout
       activePage={activePage}
       onNavigate={setActivePage}
+      navStatus={{
+        bank: project?.bank_approval?.verdict_level as string | undefined,
+        tech: project?.tech_connection?.verdict_level as string | undefined
+      }}
       projectName={project?.summary.project_name}
       userName={auth.user.login}
       userRole={auth.user.role}
@@ -117,10 +125,14 @@ function App() {
       {activePage === "gpr" && <GprPage project={project} />}
       {activePage === "sales" && <SalesPage project={project} />}
       {activePage === "credit" && <CreditCashflowPage project={project} />}
+      {activePage === "bank" && <BankPage project={project} />}
+      {activePage === "tech" && <TechConnectionPage project={project} />}
+      {activePage === "ai" && <AiConclusionPage project={project} />}
       {activePage === "dscr" && <DscrPage project={project} />}
       {activePage === "scenarios" && <ScenariosPage project={project} />}
       {activePage === "optimization" && <OptimizationPage project={project} />}
       {activePage === "improvement" && <ImprovementPlanPage project={project} />}
+      {activePage === "billing" && <BillingPage />}
       {activePage === "history" && (
         <ProjectsHistoryPage
           onLoadProject={(loadedProject) => {

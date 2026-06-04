@@ -24,6 +24,44 @@ export function DashboardPage({ project, onNavigate }: DashboardPageProps) {
   }
 
   const summary = project.summary;
+  const land = project.land_valuation;
+  const bank = project.bank_approval;
+  const tech = project.tech_connection;
+  const landToneByLevel: Record<string, "green" | "yellow" | "red" | "blue"> = {
+    ok: "green",
+    warning: "yellow",
+    critical: "red",
+    info: "blue"
+  };
+  const landTone = landToneByLevel[String(land?.verdict_level ?? "")] ?? "blue";
+  const verdictCards: Array<{
+    key: string;
+    title: string;
+    level: string;
+    text: string;
+    page?: PageKey;
+  }> = [
+    {
+      key: "land",
+      title: "Земля · остаточный метод",
+      level: String(land?.verdict_level ?? ""),
+      text: String(land?.verdict ?? "Нет данных.")
+    },
+    {
+      key: "bank",
+      title: "Банк · проектное финансирование",
+      level: String(bank?.verdict_level ?? ""),
+      text: String(bank?.verdict ?? "Нет данных."),
+      page: "bank"
+    },
+    {
+      key: "tech",
+      title: "Техприсоединение · ТУ",
+      level: String(tech?.verdict_level ?? ""),
+      text: String(tech?.verdict ?? "Нет данных."),
+      page: "tech"
+    }
+  ];
   const budgetByChapters = (project.detailed_budget.chapter_totals ?? []).map((row) => ({
     name: String(row["Глава"] ?? row["chapter"] ?? "Глава"),
     value: toNumber(row["Сумма"] ?? row["amount"])
@@ -31,6 +69,23 @@ export function DashboardPage({ project, onNavigate }: DashboardPageProps) {
 
   return (
     <div className="page-stack">
+      <section className="verdicts-grid">
+        {verdictCards.map((card) => (
+          <article key={card.key} className={`verdict-card tone-${landToneByLevel[card.level] ?? "blue"}`}>
+            <span className="verdict-title">{card.title}</span>
+            <p>{card.text}</p>
+            {card.page ? (
+              <button className="verdict-link" type="button" onClick={() => onNavigate(card.page as PageKey)}>
+                Подробнее →
+              </button>
+            ) : (
+              <small>
+                Макс. цена: {formatRub(land?.max_land_price)} · безубыточная: {formatRub(land?.break_even_land_price)}
+              </small>
+            )}
+          </article>
+        ))}
+      </section>
       <section className="metric-grid">
         <MetricCard title="Итоговый бюджет" value={formatRub(summary.total_budget)} />
         <MetricCard title="СМР" value={formatRub(project.budget.cmr)} />
@@ -40,6 +95,14 @@ export function DashboardPage({ project, onNavigate }: DashboardPageProps) {
         <MetricCard title="Пик кредита" value={formatRub(summary.max_credit_balance)} />
         <MetricCard title="Собственные средства" value={formatRub(summary.total_equity_required)} tone="yellow" />
         <MetricCard title="Minimum DSCR" value={summary.minimum_dscr ? String(summary.minimum_dscr) : "нет данных"} tone={statusByDscr(summary.minimum_dscr)} />
+        {land?.max_land_price !== undefined ? (
+          <MetricCard
+            title="Макс. цена земли"
+            value={formatRub(land.max_land_price)}
+            subtitle={land.safety_reserve != null ? `Запас ${formatPercent(land.safety_reserve)}` : "Целевая маржа 15%"}
+            tone={landTone}
+          />
+        ) : null}
       </section>
 
       <div className="grid two">

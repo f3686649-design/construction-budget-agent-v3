@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -26,20 +27,33 @@ from backend.tools.detailed_budget_generator import (
 from backend.tools.dscr_model import calculate_dscr
 from backend.tools.excel_exporter import export_model_to_excel
 from backend.tools.gpr_generator import generate_gpr
+from backend.tools.bank_approval import evaluate_bank_approval
+from backend.tools.escrow_credit_model import generate_escrow_financing
 from backend.tools.improvement_plan import build_improvement_plan
+from backend.tools.land_value_estimator import evaluate_land_value
 from backend.tools.norms import round_money
 from backend.tools.optimization_advisor import advise_project_optimization
 from backend.tools.price_estimator import estimate_sale_price, recalculate_price_with_actual_interest
 from backend.tools.risk_analyzer import analyze_risks
 from backend.tools.scenario_generator import generate_scenarios
 from backend.tools.sales_plan_generator import generate_sales_plan
+from backend.tools.tech_connection_estimator import estimate_tech_connection
 
 
 OUTPUT_DIR = Path(__file__).resolve().parent / "storage" / "outputs"
-app = FastAPI(title="Агент строительного бюджета v3", version="3.0.0")
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+    if origin.strip()
+]
+# Публичные legacy-endpoints без авторизации (/generate-model, /download).
+# Локально удобны; в проде выключить: ALLOW_PUBLIC_GENERATE=false (есть /api/* с авторизацией).
+ALLOW_PUBLIC_GENERATE = os.getenv("ALLOW_PUBLIC_GENERATE", "true").strip().lower() not in ("false", "0", "no")
+
+app = FastAPI(title="Агент строительного бюджета v3", version="3.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -66,8 +80,17 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _require_public_api() -> None:
+    if not ALLOW_PUBLIC_GENERATE:
+        raise HTTPException(
+            status_code=403,
+            detail="Публичный endpoint отключён. Используйте /api/generate-model с авторизацией.",
+        )
+
+
 @app.post("/generate-model")
 def generate_model(project_input: ProjectInput) -> dict[str, Any]:
+    _require_public_api()
     model = build_financial_model(project_input)
     excel_path = export_model_to_excel(model, OUTPUT_DIR)
     model["output_filename"] = excel_path.name
@@ -77,6 +100,7 @@ def generate_model(project_input: ProjectInput) -> dict[str, Any]:
 
 @app.get("/download/{filename}")
 def download(filename: str) -> FileResponse:
+    _require_public_api()
     path = (OUTPUT_DIR / filename).resolve()
     if OUTPUT_DIR.resolve() not in path.parents or not path.exists():
         raise HTTPException(status_code=404, detail="Файл не найден.")
@@ -201,6 +225,56 @@ def build_financial_model(project_input: ProjectInput) -> dict[str, Any]:
     else:
         data["recommended_price_per_m2"] = price_recalculation["final_recommended_price_per_m2"]
     economics.update(_pricing_metrics(data, price_estimation, sale_price_source))
+
+    land_valuation = evaluate_land_value(
+        revenue=float(economics["revenue"]),
+        total_budget=float(budget["total_budget"]),
+        land_cost=float(budget["land"]),
+        total_interest=float(credit["total_interest"]),
+        land_area=float(data.get("land_area") or 0),
+        market_revenue=float(data["market_price_per_m2"]) * sellable_area if data.get("market_price_per_m2") else None,
+        profit_after_interest=float(economics["profit_after_interest"]),
+        margin_after_interest=float(economics["margin_after_interest"]),
+    )
+    trace.extend(land_valuation.pop("trace"))
+    assumptions.extend(land_valuation.pop("assumption_records"))
+
+    escrow_financing = generate_escrow_financing(
+        gpr=gpr,
+        sales_plan=sales_plan,
+        total_budget=float(budget["total_budget"]),
+        credit_share=float(data["credit_share"]),
+        base_rate=float(data["credit_rate"]),
+        construction_months=int(data["construction_months"]),
+    )
+    trace.extend(escrow_financing.pop("trace"))
+    bank_approval = evaluate_bank_approval(
+        escrow=escrow_financing,
+        gpr=gpr,
+        sales_plan=sales_plan,
+        total_budget=float(budget["total_budget"]),
+        credit_share=float(data["credit_share"]),
+        base_rate=float(data["credit_rate"]),
+        construction_months=int(data["construction_months"]),
+    )
+    trace.extend(bank_approval.pop("trace"))
+    assumptions.append(
+        {
+            "field": "escrow_covered_rate",
+            "value": escrow_financing["escrow_covered_rate"],
+            "reason": "Льготная ставка на часть долга, покрытую эскроу (проектное финансирование, 214-ФЗ).",
+            "source": "developer_assumption",
+        }
+    )
+    economics["llcr"] = escrow_financing["llcr"]
+    economics["escrow_coverage_at_delivery"] = escrow_financing["escrow_coverage_at_delivery"]
+    economics["escrow_total_interest"] = escrow_financing["total_interest"]
+    economics["bank_verdict_code"] = bank_approval["verdict_code"]
+
+    tech_connection = estimate_tech_connection(data, budget)
+    trace.extend(tech_connection.pop("trace"))
+    assumptions.extend(tech_connection.pop("assumption_records"))
+
     price_warning = "Цена для целевой маржи выше рыночного ориентира. Есть риск, что проект не продастся по требуемой цене."
     price_estimation_warnings = [warning for warning in price_estimation["warnings"] if warning != price_warning]
     if data["final_target_margin_price_per_m2"] > data["market_price_per_m2"]:
@@ -213,6 +287,81 @@ def build_financial_model(project_input: ProjectInput) -> dict[str, Any]:
     economics.update(summary_metrics)
 
     risks = analyze_risks(data, budget, credit, dscr, economics, cashflow)
+    if land_valuation["verdict_level"] == "critical":
+        risks.insert(
+            0,
+            {
+                "code": "land_price_infeasible",
+                "level": "high",
+                "title": "Цена земли экономически не обоснована",
+                "description": land_valuation["verdict"],
+                "recommendation": (
+                    "Торговаться до цены не выше "
+                    f"{round_money(max(land_valuation['max_land_price'], 0))} ₽ "
+                    "или отказаться от покупки участка."
+                ),
+            },
+        )
+    elif land_valuation["verdict_level"] == "warning":
+        risks.insert(
+            0,
+            {
+                "code": "land_price_borderline",
+                "level": "medium",
+                "title": "Запас по цене земли ниже порога",
+                "description": land_valuation["verdict"],
+                "recommendation": "Зафиксировать цену продажи и себестоимость до сделки по участку.",
+            },
+        )
+    if bank_approval["verdict_code"] == "rejected":
+        risks.insert(
+            0,
+            {
+                "code": "bank_financing_rejected",
+                "level": "high",
+                "title": "Проект не проходит банковское финансирование",
+                "description": bank_approval["verdict"],
+                "recommendation": " ".join(bank_approval["recommendations"][:3])
+                or "Пересмотреть структуру финансирования проекта.",
+            },
+        )
+    elif bank_approval["verdict_code"] == "conditional":
+        risks.insert(
+            0,
+            {
+                "code": "bank_financing_conditional",
+                "level": "medium",
+                "title": "Банк согласует проект только с условиями",
+                "description": bank_approval["verdict"],
+                "recommendation": " ".join(bank_approval["recommendations"][:3])
+                or "Закрыть замечания банка до подачи заявки.",
+            },
+        )
+    if tech_connection["verdict_level"] == "critical":
+        risks.insert(
+            0,
+            {
+                "code": "tech_connection_deficit",
+                "level": "high",
+                "title": "Техприсоединение не обеспечено бюджетом",
+                "description": tech_connection["verdict"],
+                "recommendation": (
+                    f"Заложить в бюджет плату за ТП {round_money(tech_connection['total_cost'])} ₽ "
+                    "и запросить ТУ у ресурсоснабжающих организаций до сделки по участку."
+                ),
+            },
+        )
+    elif tech_connection["verdict_level"] == "warning":
+        risks.insert(
+            0,
+            {
+                "code": "tech_connection_warning",
+                "level": "medium",
+                "title": "Риски по техприсоединению",
+                "description": tech_connection["verdict"],
+                "recommendation": "Уточнить плату и сроки по фактическим ТУ, подать заявки до старта стройки.",
+            },
+        )
     trace.append(
         {
             "step": "analyze_risks",
@@ -298,6 +447,10 @@ def build_financial_model(project_input: ProjectInput) -> dict[str, Any]:
         "cashflow": cashflow,
         "dscr": dscr,
         "economics": economics,
+        "land_valuation": land_valuation,
+        "escrow_financing": escrow_financing,
+        "bank_approval": bank_approval,
+        "tech_connection": tech_connection,
         "detailed_budget": detailed_budget,
         "work_schedule": work_schedule,
         "gpr_summary": work_schedule["summary"],

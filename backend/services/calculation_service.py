@@ -52,6 +52,10 @@ def build_frontend_response(
     economics = model.get("economics", {})
     credit = model.get("credit", {})
     dscr = model.get("dscr", {})
+    land_valuation = model.get("land_valuation", {})
+    escrow_financing = model.get("escrow_financing", {})
+    bank_approval = model.get("bank_approval", {})
+    tech_connection = model.get("tech_connection", {})
     summary = {
         "project_name": model.get("input", {}).get("project_name"),
         "city": model.get("input", {}).get("city"),
@@ -62,6 +66,18 @@ def build_frontend_response(
         "minimum_dscr": dscr.get("minimum_dscr_after_sales_start"),
         "total_equity_required": economics.get("total_equity_required", 0),
         "max_credit_balance": credit.get("max_balance", 0),
+        "max_land_price": land_valuation.get("max_land_price"),
+        "land_verdict": land_valuation.get("verdict"),
+        "land_verdict_level": land_valuation.get("verdict_level"),
+        "llcr": escrow_financing.get("llcr"),
+        "escrow_coverage_at_delivery": escrow_financing.get("escrow_coverage_at_delivery"),
+        "bank_verdict": bank_approval.get("verdict"),
+        "bank_verdict_code": bank_approval.get("verdict_code"),
+        "bank_verdict_level": bank_approval.get("verdict_level"),
+        "tech_connection_cost": tech_connection.get("total_cost"),
+        "tech_connection_deficit": tech_connection.get("deficit"),
+        "tech_connection_verdict": tech_connection.get("verdict"),
+        "tech_connection_verdict_level": tech_connection.get("verdict_level"),
     }
     return {
         "project_id": project_id,
@@ -75,6 +91,10 @@ def build_frontend_response(
         "cashflow": model.get("cashflow", []),
         "dscr": dscr,
         "economics": economics,
+        "land_valuation": land_valuation,
+        "escrow_financing": escrow_financing,
+        "bank_approval": bank_approval,
+        "tech_connection": tech_connection,
         "risks": model.get("risks", []),
         "scenarios": model.get("scenarios", []),
         "optimization": model.get("optimization", {}),

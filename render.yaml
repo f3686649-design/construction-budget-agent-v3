@@ -13,3 +13,25 @@ services:
         value: admin
       - key: AUTH_SECRET
         generateValue: true
+      - key: ALLOW_PUBLIC_GENERATE
+        value: "false"
+      - key: CORS_ORIGINS
+        value: ""
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      - key: OPENAI_BASE_URL
+        value: https://api.openai.com/v1
+      - key: LLM_TIMEOUT_SECONDS
+        value: "90"
+      - key: RATE_LIMIT_GENERATE_PER_HOUR
+        value: "60"
+      - key: RATE_LIMIT_AI_PER_HOUR
+        value: "20"
+      - key: YOOKASSA_SHOP_ID
+        sync: false
+      - key: YOOKASSA_SECRET_KEY
+        sync: false
+      - key: BILLING_RETURN_URL
+        value: ""

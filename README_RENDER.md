@@ -126,3 +126,19 @@ docker run --rm -p 10000:10000 -e PORT=10000 -e APP_ADMIN_USERNAME=admin -e APP_
 ```text
 http://localhost:10000
 ```
+
+## Переменные окружения v3.1
+
+| Переменная | Назначение | Прод-значение |
+| --- | --- | --- |
+| `ALLOW_PUBLIC_GENERATE` | Публичные endpoints без авторизации (`/generate-model`, `/download`) | `false` |
+| `CORS_ORIGINS` | Разрешённые источники CORS через запятую (пусто = только локальные) | домен фронтенда или пусто |
+| `OPENAI_API_KEY` | Ключ OpenAI для ИИ-заключений (без него блок просто недоступен) | секрет |
+| `OPENAI_MODEL` | Модель OpenAI | `gpt-4o-mini` |
+| `OPENAI_BASE_URL` | Базовый URL API (можно прокси) | `https://api.openai.com/v1` |
+| `RATE_LIMIT_GENERATE_PER_HOUR` | Лимит расчётов модели на пользователя в час | `60` |
+| `RATE_LIMIT_AI_PER_HOUR` | Лимит ИИ-заключений на пользователя в час | `20` |
+| `YOOKASSA_SHOP_ID` / `YOOKASSA_SECRET_KEY` | Ключи магазина ЮKassa (без них — оплата по счёту) | секреты |
+| `BILLING_RETURN_URL` | Куда вернуть пользователя после оплаты | `https://домен/billing` |
+
+Все значения уже прописаны в `render.yaml`; секреты (`APP_ADMIN_PASSWORD`, `OPENAI_API_KEY`) задаются в кабинете Render.

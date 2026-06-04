@@ -71,6 +71,7 @@ export function NewProjectPage({ onGenerate, loading, error }: NewProjectPagePro
         <NumberField label="Общая площадь, м²" value={form.total_area} onChange={(value) => numberValue("total_area", value)} required />
         <NumberField label="Продаваемая площадь, м²" value={form.sellable_area} onChange={(value) => numberValue("sellable_area", value)} required />
         <NumberField label="Этажность" value={form.floors} onChange={(value) => numberValue("floors", value)} required />
+        <NumberField label="Количество квартир, необязательно" value={form.apartments_count} onChange={(value) => numberValue("apartments_count", value)} />
         <SelectField label="Уровень отделки реализуемых помещений" value={form.sellable_finish_level} options={["без отделки", "черновая", "white box", "чистовая"]} onChange={(value) => setValue("sellable_finish_level", value)} />
         <NumberField label="Цена продажи м², необязательно" value={form.sale_price_per_m2} onChange={(value) => numberValue("sale_price_per_m2", value)} />
       </FormSection>
@@ -80,6 +81,7 @@ export function NewProjectPage({ onGenerate, loading, error }: NewProjectPagePro
         <SelectField label="Режим расчёта свайного основания" value={form.foundation_optimization_mode} options={["оптимизированный", "нормативный"]} onChange={(value) => setValue("foundation_optimization_mode", value)} />
         <ToggleField label="Есть подземная часть?" checked={Boolean(form.has_underground_part)} onChange={(value) => setValue("has_underground_part", value)} />
         <ToggleField label="Наружные сети включены?" checked={Boolean(form.external_networks_included)} onChange={(value) => setValue("external_networks_included", value)} />
+        <NumberField label="Плата за техприсоединение по ТУ, ₽ (необязательно)" value={form.tp_total_cost_override} onChange={(value) => numberValue("tp_total_cost_override", value)} />
         <ToggleField label="Газ только пищеприготовление?" checked={Boolean(form.gas_only_cooking)} onChange={(value) => setValue("gas_only_cooking", value)} />
         <NumberField label="Срок строительства, мес." value={form.construction_months} onChange={(value) => numberValue("construction_months", value)} />
         <NumberField label="Срок продаж, мес." value={form.sales_months} onChange={(value) => numberValue("sales_months", value)} />

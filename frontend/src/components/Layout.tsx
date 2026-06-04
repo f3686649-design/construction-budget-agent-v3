@@ -9,6 +9,7 @@ interface LayoutProps {
   userName?: string;
   userRole?: string;
   onLogout: () => void;
+  navStatus?: Partial<Record<PageKey, string>>;
 }
 
 const NAVIGATION: NavigationItem[] = [
@@ -18,14 +19,18 @@ const NAVIGATION: NavigationItem[] = [
   { key: "gpr", label: "ГПР" },
   { key: "sales", label: "Продажи" },
   { key: "credit", label: "Кредит и ДДС" },
+  { key: "bank", label: "Банк" },
+  { key: "tech", label: "ТУ и сети" },
+  { key: "ai", label: "Заключение ИИ" },
   { key: "dscr", label: "DSCR" },
   { key: "scenarios", label: "Сценарии" },
   { key: "optimization", label: "Оптимизация" },
   { key: "improvement", label: "План улучшений" },
-  { key: "history", label: "История проектов" }
+  { key: "history", label: "История проектов" },
+  { key: "billing", label: "Тариф" }
 ];
 
-export function Layout({ activePage, onNavigate, children, projectName, userName, userRole, onLogout }: LayoutProps) {
+export function Layout({ activePage, onNavigate, children, projectName, userName, userRole, onLogout, navStatus }: LayoutProps) {
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -46,6 +51,7 @@ export function Layout({ activePage, onNavigate, children, projectName, userName
               onClick={() => onNavigate(item.key)}
             >
               {item.label}
+              {navStatus?.[item.key] ? <span className={`nav-dot ${navStatus[item.key]}`} /> : null}
             </button>
           ))}
         </nav>

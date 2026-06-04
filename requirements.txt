@@ -7,3 +7,4 @@ pytest
 streamlit
 pandas
 python-dotenv
+requests

@@ -27,6 +27,8 @@ SHEET_NAMES = (
     "15_План_улучшений",
     "16_Поставки",
     "17_Свод",
+    "18_Банк",
+    "19_ТУ",
 )
 
 RU_LABELS = {
@@ -371,6 +373,8 @@ def export_model_to_excel(model: dict[str, Any], output_dir: Path) -> Path:
     _write_improvement_plan(sheets["15_План_улучшений"], model)
     _write_supply_plan(sheets["16_Поставки"], model["supply_plan"])
     _write_summary_sheet(sheets["17_Свод"], model["summary_metrics"])
+    _write_bank_sheet(sheets["18_Банк"], model)
+    _write_tech_connection_sheet(sheets["19_ТУ"], model)
 
     for sheet in workbook.worksheets:
         _style_sheet(sheet)
@@ -380,6 +384,120 @@ def export_model_to_excel(model: dict[str, Any], output_dir: Path) -> Path:
     _style_improvement_sheet(sheets["15_План_улучшений"])
     workbook.save(path)
     return path
+
+
+def _write_tech_connection_sheet(sheet: Any, model: dict[str, Any]) -> None:
+    tech = model.get("tech_connection") or {}
+    sheet.append(["Техническое присоединение (ТУ)"])
+    sheet.append([])
+    sheet.append(["Вердикт", tech.get("verdict", "нет данных")])
+    sheet.append([])
+    sheet.append(["Показатель", "Значение"])
+    loads = tech.get("loads") or {}
+    rows = (
+        ("Квартир", tech.get("apartments")),
+        ("Источник кол-ва квартир", tech.get("apartments_source")),
+        ("Жителей (расчёт)", tech.get("residents")),
+        ("Электрическая мощность, кВт", loads.get("power_kw")),
+        ("Водоснабжение, м³/сут", loads.get("water_m3_day")),
+        ("Водоотведение, м³/сут", loads.get("sewer_m3_day")),
+        ("Тепловая нагрузка, Гкал/ч", loads.get("heat_gcal_h")),
+        ("Газ, м³/ч", loads.get("gas_m3_h")),
+        ("Плата за ТП итого, ₽", tech.get("total_cost")),
+        ("Источник стоимости", tech.get("cost_source")),
+        ("Заложено в бюджете (Наружные сети), ₽", tech.get("budget_allocation")),
+        ("Дефицит, ₽", tech.get("deficit")),
+        ("Макс. срок мероприятий ТП, мес", tech.get("max_lead_time_months")),
+        ("Срок стройки, мес", tech.get("construction_months")),
+    )
+    for name, value in rows:
+        sheet.append([name, value if value is not None else "—"])
+    items = tech.get("items") or []
+    if items:
+        sheet.append([])
+        sheet.append(["Ресурс", "Нагрузка", "Ед.", "Ставка, ₽/ед.", "Стоимость, ₽", "База расчёта", "Срок ТП, мес", "Вписывается в стройку"])
+        for item in items:
+            sheet.append([
+                item.get("resource"),
+                item.get("load"),
+                item.get("unit"),
+                item.get("rate"),
+                item.get("cost"),
+                item.get("basis"),
+                item.get("lead_time_months"),
+                "да" if item.get("deadline_ok") else "НЕТ",
+            ])
+
+
+def _write_bank_sheet(sheet: Any, model: dict[str, Any]) -> None:
+    bank = model.get("bank_approval") or {}
+    escrow = model.get("escrow_financing") or {}
+    sheet.append(["Банковское проектное финансирование (эскроу, 214-ФЗ)"])
+    sheet.append([])
+    sheet.append(["Вердикт банка", bank.get("verdict", "нет данных")])
+    sheet.append([])
+    sheet.append(["Ключевые показатели эскроу-модели"])
+    metrics = (
+        ("Собственное участие", escrow.get("equity_share")),
+        ("Кредитный лимит, ₽", escrow.get("credit_limit")),
+        ("Пиковый долг, ₽", escrow.get("max_debt")),
+        ("Месяц пикового долга", escrow.get("max_debt_month")),
+        ("Проценты за период (капитализация), ₽", escrow.get("total_interest")),
+        ("Базовая ставка", escrow.get("base_rate")),
+        ("Ставка на покрытую эскроу часть", escrow.get("escrow_covered_rate")),
+        ("Эскроу на вводе, ₽", escrow.get("escrow_at_delivery")),
+        ("Долг на вводе, ₽", escrow.get("debt_at_delivery")),
+        ("Покрытие долга эскроу на вводе", escrow.get("escrow_coverage_at_delivery")),
+        ("LLCR", escrow.get("llcr")),
+        ("Прибыль по эскроу-модели, ₽", escrow.get("profit")),
+        ("Маржа по эскроу-модели", escrow.get("margin")),
+        ("Кассовый разрыв, ₽", escrow.get("funding_gap_total")),
+        ("Месяц полного погашения", escrow.get("repayment_finished_month")),
+    )
+    for name, value in metrics:
+        sheet.append([name, value if value is not None else "—"])
+    sheet.append([])
+    sheet.append(["Критерии банка"])
+    sheet.append(["Критерий", "Порог", "Факт", "Статус", "Комментарий"])
+    for criterion in bank.get("criteria") or []:
+        sheet.append([
+            criterion.get("name"),
+            criterion.get("threshold"),
+            criterion.get("actual"),
+            criterion.get("status"),
+            criterion.get("comment"),
+        ])
+    recommendations = bank.get("recommendations") or []
+    if recommendations:
+        sheet.append([])
+        sheet.append(["Рекомендации для прохождения банка"])
+        for recommendation in recommendations:
+            sheet.append([recommendation])
+    schedule = escrow.get("schedule") or []
+    if schedule:
+        sheet.append([])
+        sheet.append(["Помесячный график эскроу-финансирования"])
+        sheet.append([
+            "Месяц", "Затраты", "Из собственных", "Выборка кредита", "Проценты",
+            "Поступления на эскроу", "Остаток эскроу", "Раскрытие эскроу",
+            "Прямые поступления", "Погашение", "Долг", "Покрытие эскроу", "Кассовый разрыв",
+        ])
+        for row in schedule:
+            sheet.append([
+                row.get("month"),
+                row.get("construction_cost"),
+                row.get("equity_payment"),
+                row.get("drawdown"),
+                row.get("interest"),
+                row.get("escrow_inflow"),
+                row.get("escrow_balance"),
+                row.get("escrow_release"),
+                row.get("direct_receipts"),
+                row.get("repayment"),
+                row.get("debt_balance"),
+                row.get("escrow_coverage") if row.get("escrow_coverage") is not None else "—",
+                row.get("funding_gap"),
+            ])
 
 
 def _write_key_values(sheet: Any, values: dict[str, Any]) -> None:
