@@ -77,7 +77,6 @@ export function Layout({ activePage, onNavigate, children, projectName, userName
             <p className="eyebrow">ИИ-агент девелоперской модели</p>
             <h1>Бюджет, ГПР, продажи, кредит, ДДС и оптимизация</h1>
           </div>
-          <div className="status-pill">Backend: http://localhost:8000</div>
         </div>
         {children}
       </main>
