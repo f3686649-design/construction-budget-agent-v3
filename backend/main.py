@@ -61,6 +61,14 @@ app.add_middleware(
 app.include_router(api_router)
 
 
+@app.on_event("startup")
+def _startup_init_db() -> None:
+    from backend.services.db import db_enabled, init_db
+
+    if db_enabled():
+        init_db()
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     fields: list[str] = []

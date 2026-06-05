@@ -71,6 +71,24 @@ def save_project_files(
     excel_path: Path,
     projects_dir: Path = PROJECTS_DIR,
 ) -> dict[str, Any]:
+    from backend.services.db import db_enabled, save_file_db, save_project_db
+
+    if db_enabled():
+        metadata = {**metadata, "excel_filename": excel_path.name}
+        result = {**result, "excel_filename": excel_path.name, "download_url": download_url_for(excel_path.name)}
+        if excel_path.exists():
+            save_file_db(excel_path.name, excel_path.read_bytes())
+        save_project_db(
+            project_id=project_id,
+            username=str(metadata.get("user") or "") or None,
+            project_name=str(metadata.get("project_name") or "") or None,
+            metadata=metadata,
+            input_data=input_data,
+            result=result,
+            excel_filename=excel_path.name,
+        )
+        return metadata
+
     project_dir = prepare_project_dir(project_id, projects_dir)
     target_excel_path = project_dir / excel_path.name
     if excel_path.exists() and excel_path.resolve() != target_excel_path.resolve():
@@ -85,6 +103,10 @@ def save_project_files(
 
 
 def list_projects(projects_dir: Path = PROJECTS_DIR) -> list[dict[str, Any]]:
+    from backend.services.db import db_enabled, list_projects_db
+
+    if db_enabled():
+        return list_projects_db()
     if not projects_dir.exists():
         return []
     rows: list[dict[str, Any]] = []
@@ -97,6 +119,10 @@ def list_projects(projects_dir: Path = PROJECTS_DIR) -> list[dict[str, Any]]:
 
 
 def get_project_result(project_id: str, projects_dir: Path = PROJECTS_DIR) -> dict[str, Any] | None:
+    from backend.services.db import db_enabled, get_project_result_db
+
+    if db_enabled():
+        return get_project_result_db(project_id)
     result_path = get_project_dir(project_id, projects_dir) / "result.json"
     if not result_path.exists():
         return None
@@ -123,3 +149,15 @@ def _write_json(path: Path, data: dict[str, Any] | list[Any]) -> None:
 def _read_json(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def get_excel_bytes(filename: str, projects_dir: Path = PROJECTS_DIR) -> bytes | None:
+    """Содержимое Excel: из БД (db-режим) или с диска (файловый режим)."""
+    from backend.services.db import db_enabled, get_file_db
+
+    if db_enabled():
+        if not filename or any(part in filename for part in ("..", "/", "\\")):
+            return None
+        return get_file_db(filename)
+    path = find_excel_file(filename, projects_dir)
+    return path.read_bytes() if path else None

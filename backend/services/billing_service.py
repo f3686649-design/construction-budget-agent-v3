@@ -124,6 +124,26 @@ def set_user_plan(login: str, plan_code: str, months: int = 1, users_file: Path 
         raise ValueError(f"Неизвестный тариф: {plan_code}")
     months = max(1, int(months))
 
+    from backend.services.db import db_enabled, get_user_plan_row, set_plan
+
+    if db_enabled():
+        today = date.today()
+        current_until: date | None = None
+        row = get_user_plan_row(login)
+        if row is None:
+            raise ValueError(f"Пользователь {login} не найден.")
+        current_plan, current_until_raw = row
+        if current_until_raw:
+            try:
+                current_until = date.fromisoformat(str(current_until_raw)[:10])
+            except ValueError:
+                current_until = None
+        base = current_until if (current_until and current_until > today and current_plan == plan["code"]) else today
+        new_until = base + timedelta(days=30 * months)
+        if not set_plan(login, plan["code"], new_until.isoformat()):
+            raise ValueError(f"Пользователь {login} не найден.")
+        return {"login": login, "plan": plan["code"], "paid_until": new_until.isoformat(), "months": months}
+
     with _users_lock:
         if not users_file.exists():
             raise ValueError("users.json не найден.")
@@ -177,7 +197,12 @@ def _load_usage(month_key: str | None = None) -> dict[str, dict[str, int]]:
 
 
 def get_usage(login: str, month_key: str | None = None) -> dict[str, int]:
-    usage = _load_usage(month_key).get(login.strip().lower(), {})
+    from backend.services.db import db_enabled, get_usage_db
+
+    month = month_key or datetime.now().strftime("%Y-%m")
+    if db_enabled():
+        return get_usage_db(login, month)
+    usage = _load_usage(month).get(login.strip().lower(), {})
     return {"generate": int(usage.get("generate") or 0), "ai": int(usage.get("ai") or 0)}
 
 
@@ -198,6 +223,11 @@ def check_quota(login: str, scope: str) -> tuple[bool, dict[str, Any]]:
 
 
 def record_usage(login: str, scope: str) -> None:
+    from backend.services.db import db_enabled, increment_usage_db
+
+    if db_enabled():
+        increment_usage_db(login, datetime.now().strftime("%Y-%m"), scope)
+        return
     key = login.strip().lower()
     with _usage_lock:
         path = _usage_file()

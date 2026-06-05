@@ -354,6 +354,11 @@ def build_project_digest(model: dict[str, Any]) -> dict[str, Any]:
 
 
 def save_ai_conclusion(project_id: str, payload: dict[str, Any]) -> Path:
+    from backend.services.db import db_enabled, save_ai_conclusion_db
+
+    if db_enabled():
+        save_ai_conclusion_db(project_id, payload)
+        return get_project_dir(project_id) / AI_CONCLUSION_FILENAME
     project_dir = get_project_dir(project_id)
     project_dir.mkdir(parents=True, exist_ok=True)
     path = project_dir / AI_CONCLUSION_FILENAME
@@ -362,6 +367,10 @@ def save_ai_conclusion(project_id: str, payload: dict[str, Any]) -> Path:
 
 
 def load_ai_conclusion(project_id: str) -> dict[str, Any] | None:
+    from backend.services.db import db_enabled, load_ai_conclusion_db
+
+    if db_enabled():
+        return load_ai_conclusion_db(project_id)
     path = get_project_dir(project_id) / AI_CONCLUSION_FILENAME
     if not path.exists():
         return None

@@ -53,6 +53,11 @@ def create_user_record(username: str, password: str, role: str = "user") -> dict
 
 
 def load_users(users_file: Path = USERS_FILE) -> list[dict[str, Any]]:
+    # При заданном DATABASE_URL пользователи живут в Postgres.
+    from backend.services.db import db_enabled, fetch_users
+
+    if db_enabled():
+        return fetch_users()
     if not users_file.exists():
         return []
     with users_file.open("r", encoding="utf-8") as handle:

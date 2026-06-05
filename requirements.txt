@@ -7,4 +7,4 @@ pytest
 streamlit
 pandas
 python-dotenv
-requests
+psycopg[binary]

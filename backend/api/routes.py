@@ -16,7 +16,7 @@ from backend.services.llm_service import (
     load_ai_conclusion,
     save_ai_conclusion,
 )
-from backend.services.project_storage import find_excel_file, get_project_result, list_projects
+from backend.services.project_storage import find_excel_file, get_excel_bytes, get_project_result, list_projects
 
 
 router = APIRouter(prefix="/api", tags=["api"])
@@ -201,12 +201,14 @@ def api_admin_set_plan(login: str, body: dict, current_user: dict[str, str] = De
 
 
 @router.get("/download/{filename}")
-def api_download(filename: str, current_user: dict[str, str] = Depends(get_current_user)) -> FileResponse:
-    path = find_excel_file(filename)
-    if path is None:
+def api_download(filename: str, current_user: dict[str, str] = Depends(get_current_user)):
+    from fastapi.responses import Response
+
+    content = get_excel_bytes(filename)
+    if content is None:
         raise HTTPException(status_code=404, detail="Excel-файл не найден.")
-    return FileResponse(
-        path,
-        filename=path.name,
+    return Response(
+        content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
