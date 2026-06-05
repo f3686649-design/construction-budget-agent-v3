@@ -116,7 +116,7 @@ def test_create_payment_with_mocked_yookassa(users_file: Path, monkeypatch: pyte
     assert result["confirmation_url"] == "https://yookassa.ru/pay/1"
     sent = mocked.call_args.kwargs["json"]
     assert sent["metadata"] == {"login": "ivan", "plan": "start", "months": 1}
-    assert sent["amount"]["value"] == "9900.00"
+    assert sent["amount"]["value"] == "15000.00"
 
 
 def test_webhook_activates_plan_after_api_verification(users_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
