@@ -52,12 +52,14 @@ def create_user_record(username: str, password: str, role: str = "user") -> dict
     }
 
 
-def load_users(users_file: Path = USERS_FILE) -> list[dict[str, Any]]:
+def load_users(users_file: Path | None = None) -> list[dict[str, Any]]:
     # При заданном DATABASE_URL пользователи живут в Postgres.
     from backend.services.db import db_enabled, fetch_users
 
     if db_enabled():
         return fetch_users()
+    if users_file is None:
+        users_file = USERS_FILE
     if not users_file.exists():
         return []
     with users_file.open("r", encoding="utf-8") as handle:
@@ -66,7 +68,7 @@ def load_users(users_file: Path = USERS_FILE) -> list[dict[str, Any]]:
     return [user for user in users if isinstance(user, dict)]
 
 
-def authenticate_user(login: str, password: str, users_file: Path = USERS_FILE) -> dict[str, str] | None:
+def authenticate_user(login: str, password: str, users_file: Path | None = None) -> dict[str, str] | None:
     normalized_login = login.strip().lower()
     for user in load_users(users_file):
         stored_login = str(user.get("login") or "").strip().lower()

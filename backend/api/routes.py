@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from backend.api.schemas import AiChatRequest, AuthUser, GenerateModelResponse, HealthResponse, LoginRequest, LoginResponse, ProjectHistoryItem, ProjectRequest
@@ -46,6 +46,29 @@ def api_login(credentials: LoginRequest) -> LoginResponse:
         access_token=create_access_token(user),
         user=AuthUser(**user),
     )
+
+
+@router.post("/auth/register", response_model=LoginResponse)
+def api_register(credentials: LoginRequest, request: Request) -> LoginResponse:
+    import os
+
+    if os.getenv("ALLOW_SELF_REGISTRATION", "true").strip().lower() not in {"1", "true", "yes", "on"}:
+        raise HTTPException(status_code=403, detail="Самостоятельная регистрация временно отключена.")
+    forwarded = request.headers.get("x-forwarded-for")
+    client_ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
+    allowed, _remaining = check_rate_limit(f"register:{client_ip}", "register")
+    if not allowed:
+        raise HTTPException(status_code=429, detail="Слишком много регистраций с вашего адреса. Попробуйте позже.")
+    from backend.services.user_admin import create_user
+
+    try:
+        create_user(login=credentials.login, password=credentials.password, role="user")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    user = authenticate_user(credentials.login, credentials.password)
+    if user is None:
+        raise HTTPException(status_code=500, detail="Не удалось войти после регистрации.")
+    return LoginResponse(access_token=create_access_token(user), user=AuthUser(**user))
 
 
 @router.get("/auth/me", response_model=AuthUser)

@@ -21,6 +21,8 @@ services:
         generateValue: true
       - key: ALLOW_PUBLIC_GENERATE
         value: "false"
+      - key: ALLOW_SELF_REGISTRATION
+        value: "true"
       - key: CORS_ORIGINS
         value: ""
       - key: OPENAI_API_KEY

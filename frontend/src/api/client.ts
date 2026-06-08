@@ -40,6 +40,15 @@ export async function login(loginValue: string, password: string): Promise<AuthS
   return session;
 }
 
+export async function register(loginValue: string, password: string): Promise<AuthSession> {
+  const session = await request<AuthSession>("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ login: loginValue, password })
+  });
+  saveAuthSession(session);
+  return session;
+}
+
 export async function getMe(): Promise<AuthUser> {
   return request("/auth/me");
 }

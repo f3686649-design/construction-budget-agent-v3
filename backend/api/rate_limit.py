@@ -15,6 +15,7 @@ _events: dict[tuple[str, str], deque[float]] = defaultdict(deque)
 DEFAULT_LIMITS = {
     "generate": 60,  # расчётов модели в час на пользователя
     "ai": 20,        # ИИ-заключений в час на пользователя (LLM стоит денег)
+    "register": 10,  # регистраций в час с одного IP (защита от спама)
 }
 
 

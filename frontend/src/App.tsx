@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { checkHealth, clearAuthSession, downloadExcel, generateModel, getMe, getStoredAuth, login } from "./api/client";
+import { checkHealth, clearAuthSession, downloadExcel, generateModel, getMe, getStoredAuth, login, register } from "./api/client";
 import { Layout } from "./components/Layout";
 import { AiConclusionPage } from "./pages/AiConclusionPage";
 import { BankPage } from "./pages/BankPage";
@@ -61,6 +61,19 @@ function App() {
     }
   };
 
+  const handleRegister = async (loginValue: string, password: string) => {
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      const session = await register(loginValue, password);
+      setAuth(session);
+    } catch (requestError) {
+      setAuthError(requestError instanceof Error ? requestError.message : "Не удалось зарегистрироваться.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const handleLogout = () => {
     clearAuthSession();
     setAuth(null);
@@ -94,7 +107,7 @@ function App() {
   };
 
   if (!auth) {
-    return <LoginPage onLogin={handleLogin} loading={authLoading} error={authError} backendStatus={backendStatus} />;
+    return <LoginPage onLogin={handleLogin} onRegister={handleRegister} loading={authLoading} error={authError} backendStatus={backendStatus} />;
   }
 
   return (
