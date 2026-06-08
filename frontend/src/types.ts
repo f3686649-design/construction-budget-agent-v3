@@ -15,7 +15,8 @@ export type PageKey =
   | "scenarios"
   | "optimization"
   | "improvement"
-  | "history";
+  | "history"
+  | "users";
 
 export interface ProjectInput {
   project_name?: string;
@@ -299,4 +300,14 @@ export interface ProjectHistoryItem {
 export interface NavigationItem {
   key: PageKey;
   label: string;
+  adminOnly?: boolean;
+}
+
+export interface AdminUser {
+  login: string;
+  role: string;
+  plan?: string;
+  plan_name?: string;
+  paid_until?: string | null;
+  active?: boolean;
 }

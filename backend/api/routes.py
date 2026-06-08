@@ -200,6 +200,34 @@ def api_admin_set_plan(login: str, body: dict, current_user: dict[str, str] = De
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.get("/admin/users")
+def api_admin_list_users(current_user: dict[str, str] = Depends(get_current_user)) -> list[dict]:
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Требуется роль admin.")
+    from backend.services.user_admin import list_all_users
+
+    return list_all_users()
+
+
+@router.post("/admin/users")
+def api_admin_create_user(body: dict, current_user: dict[str, str] = Depends(get_current_user)) -> dict:
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Требуется роль admin.")
+    from backend.services.user_admin import create_user
+
+    plan = body.get("plan")
+    try:
+        return create_user(
+            login=str(body.get("login") or ""),
+            password=str(body.get("password") or ""),
+            role=str(body.get("role") or "user"),
+            plan=str(plan) if plan else None,
+            months=int(body.get("months") or 1),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/download/{filename}")
 def api_download(filename: str, current_user: dict[str, str] = Depends(get_current_user)):
     from fastapi.responses import Response

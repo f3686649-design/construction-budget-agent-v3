@@ -17,6 +17,7 @@ import { ProjectsHistoryPage } from "./pages/ProjectsHistoryPage";
 import { SalesPage } from "./pages/SalesPage";
 import { ScenariosPage } from "./pages/ScenariosPage";
 import { TechConnectionPage } from "./pages/TechConnectionPage";
+import { UsersAdminPage } from "./pages/UsersAdminPage";
 import type { AuthSession, GeneratedProject, PageKey, ProjectInput } from "./types";
 
 function App() {
@@ -133,6 +134,7 @@ function App() {
       {activePage === "optimization" && <OptimizationPage project={project} />}
       {activePage === "improvement" && <ImprovementPlanPage project={project} />}
       {activePage === "billing" && <BillingPage />}
+      {activePage === "users" && <UsersAdminPage />}
       {activePage === "history" && (
         <ProjectsHistoryPage
           onLoadProject={(loadedProject) => {

@@ -1,4 +1,4 @@
-import type { AuthSession, AuthUser, GeneratedProject, ProjectHistoryItem, ProjectInput, AiStatus, AiConclusion, AiChatMessage, AiChatResponse, BillingInfo, PaymentResult } from "../types";
+import type { AuthSession, AuthUser, GeneratedProject, ProjectHistoryItem, ProjectInput, AiStatus, AiConclusion, AiChatMessage, AiChatResponse, BillingInfo, PaymentResult, AdminUser } from "../types";
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 const AUTH_STORAGE_KEY = "construction_budget_agent_auth";
@@ -67,6 +67,23 @@ export async function createPayment(plan: string, returnUrl?: string): Promise<P
   return request<PaymentResult>("/billing/create-payment", {
     method: "POST",
     body: JSON.stringify({ plan, return_url: returnUrl })
+  });
+}
+
+export async function listUsers(): Promise<AdminUser[]> {
+  return request<AdminUser[]>("/admin/users");
+}
+
+export async function createUser(payload: {
+  login: string;
+  password: string;
+  role: string;
+  plan?: string;
+  months?: number;
+}): Promise<AdminUser> {
+  return request<AdminUser>("/admin/users", {
+    method: "POST",
+    body: JSON.stringify(payload)
   });
 }
 

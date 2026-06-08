@@ -27,7 +27,8 @@ const NAVIGATION: NavigationItem[] = [
   { key: "optimization", label: "Оптимизация" },
   { key: "improvement", label: "План улучшений" },
   { key: "history", label: "История проектов" },
-  { key: "billing", label: "Тариф" }
+  { key: "billing", label: "Тариф" },
+  { key: "users", label: "Пользователи", adminOnly: true }
 ];
 
 export function Layout({ activePage, onNavigate, children, projectName, userName, userRole, onLogout, navStatus }: LayoutProps) {
@@ -43,7 +44,7 @@ export function Layout({ activePage, onNavigate, children, projectName, userName
         </div>
 
         <nav className="nav-list" aria-label="Основная навигация">
-          {NAVIGATION.map((item) => (
+          {NAVIGATION.filter((item) => !item.adminOnly || userRole === "admin").map((item) => (
             <button
               key={item.key}
               className={item.key === activePage ? "nav-item active" : "nav-item"}
