@@ -254,7 +254,10 @@ def api_admin_create_user(body: dict, current_user: dict[str, str] = Depends(get
 @router.get("/download/{filename}")
 def api_download(filename: str, current_user: dict[str, str] = Depends(get_current_user)):
     from fastapi.responses import Response
+    from backend.services.billing_service import export_allowed
 
+    if not export_allowed(current_user["login"]):
+        raise HTTPException(status_code=402, detail="Excel-выгрузка доступна на платном тарифе. Оформите тариф в разделе «Тариф».")
     content = get_excel_bytes(filename)
     if content is None:
         raise HTTPException(status_code=404, detail="Excel-файл не найден.")

@@ -20,8 +20,8 @@ PLANS: dict[str, dict[str, Any]] = {
         "name": "Триал",
         "price_rub": 0,
         "generate_quota": 1,
-        "ai_quota": 2,
-        "description": "Бесплатно: 1 расчёт и 2 ИИ-вызова в месяц — чтобы попробовать.",
+        "ai_quota": 0,
+        "description": "Бесплатно: 1 расчёт в месяц для ознакомления — без ИИ-заключения и Excel.",
         "purchasable": False,
     },
     "start": {
@@ -253,3 +253,8 @@ def billing_overview(login: str) -> dict[str, Any]:
             for plan in PLANS.values()
         ],
     }
+
+
+def export_allowed(login: str) -> bool:
+    """Excel-выгрузка доступна только на платном тарифе (не на триале)."""
+    return subscription_info(login)["effective_plan"] != DEFAULT_PLAN

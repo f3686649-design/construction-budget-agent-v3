@@ -139,7 +139,16 @@ export async function downloadExcel(path: string, filename: string): Promise<voi
   const headers: HeadersInit = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
   const response = await fetch(buildDownloadUrl(path), { headers });
   if (!response.ok) {
-    throw new Error("Не удалось скачать Excel-файл. Проверьте авторизацию и попробуйте ещё раз.");
+    let message = "Не удалось скачать Excel-файл. Проверьте авторизацию и попробуйте ещё раз.";
+    try {
+      const payload = await response.json();
+      if (typeof payload.detail === "string") {
+        message = payload.detail;
+      }
+    } catch {
+      message = "Не удалось скачать Excel-файл. Проверьте авторизацию и попробуйте ещё раз.";
+    }
+    throw new Error(message);
   }
   const blob = await response.blob();
   const objectUrl = URL.createObjectURL(blob);

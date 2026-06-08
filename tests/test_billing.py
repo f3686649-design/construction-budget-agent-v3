@@ -52,9 +52,10 @@ def test_quota_enforced_and_usage_recorded(users_file: Path) -> None:
     assert not ok
     assert details["remaining"] == 0
     assert details["used"] == quota
-    # ai-квота независима
-    ok_ai, _ = billing_service.check_quota("ivan", "ai")
-    assert ok_ai
+    # На триале ИИ-вызовы недоступны (квота 0).
+    ok_ai, ai_details = billing_service.check_quota("ivan", "ai")
+    assert not ok_ai
+    assert ai_details["quota"] == 0
 
 
 def test_set_user_plan_activates_and_extends(users_file: Path) -> None:
@@ -157,3 +158,10 @@ def test_admin_has_unlimited_corporate_plan(users_file: Path) -> None:
     assert info["generate_quota"] == billing_service.PLANS["corporate"]["generate_quota"]
     ok, details = billing_service.check_quota("admin", "generate")
     assert ok and details["quota"] >= 100_000
+
+
+def test_export_allowed_only_paid(users_file: Path) -> None:
+    assert billing_service.export_allowed("ivan") is False  # триал
+    billing_service.set_user_plan("ivan", "start", 1)
+    assert billing_service.export_allowed("ivan") is True
+    assert billing_service.export_allowed("admin") is True  # админ = corporate

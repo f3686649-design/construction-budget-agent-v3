@@ -340,6 +340,10 @@ def test_api_project_returns_full_result() -> None:
 def test_api_download_returns_excel_file() -> None:
     with configured_api_users():
         headers = api_login_headers()
+        # Excel-выгрузка доступна только на платном тарифе — повышаем юзера.
+        from backend.services import billing_service
+
+        billing_service.set_user_plan("ivan", "start", 1)
         generated = api_request("POST", "/api/generate-model", {"project_name": "Download API project"}, headers)
         assert generated.status_code == 200
         payload = generated.json()
