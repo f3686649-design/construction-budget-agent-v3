@@ -27,6 +27,7 @@ def list_all_users() -> list[dict[str, Any]]:
                 "plan_name": info.get("plan_name"),
                 "paid_until": info.get("paid_until"),
                 "active": info.get("active"),
+                "blocked": bool(user.get("blocked")),
             }
         )
     return result
@@ -90,3 +91,55 @@ def create_user(
         "paid_until": info.get("paid_until"),
         "active": info.get("active"),
     }
+
+
+def _target_user(login: str) -> dict[str, Any]:
+    normalized = (login or "").strip().lower()
+    if not normalized:
+        raise ValueError("Логин не указан.")
+    for user in load_users(auth.USERS_FILE):
+        if str(user.get("login") or "").strip().lower() == normalized:
+            return user
+    raise ValueError(f"Пользователь «{login}» не найден.")
+
+
+def set_blocked(login: str, blocked: bool) -> dict[str, Any]:
+    user = _target_user(login)
+    if str(user.get("role") or "").strip().lower() == "admin":
+        raise ValueError("Администратора нельзя заблокировать.")
+    real_login = str(user.get("login"))
+
+    from backend.services.db import db_enabled
+    from backend.services.db import set_blocked as set_blocked_db
+
+    if db_enabled():
+        set_blocked_db(real_login, blocked)
+    else:
+        users_file = auth.USERS_FILE
+        payload = json.loads(users_file.read_text(encoding="utf-8"))
+        for u in payload.get("users", []):
+            if str(u.get("login") or "").strip().lower() == real_login.strip().lower():
+                u["blocked"] = bool(blocked)
+        users_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"login": real_login, "blocked": bool(blocked)}
+
+
+def delete_user(login: str) -> dict[str, Any]:
+    user = _target_user(login)
+    if str(user.get("role") or "").strip().lower() == "admin":
+        raise ValueError("Администратора нельзя удалить.")
+    real_login = str(user.get("login"))
+
+    from backend.services.db import db_enabled, delete_user_db
+
+    if db_enabled():
+        delete_user_db(real_login)
+    else:
+        users_file = auth.USERS_FILE
+        payload = json.loads(users_file.read_text(encoding="utf-8"))
+        payload["users"] = [
+            u for u in payload.get("users", [])
+            if str(u.get("login") or "").strip().lower() != real_login.strip().lower()
+        ]
+        users_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"login": real_login, "deleted": True}

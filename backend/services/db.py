@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS users (
     role TEXT NOT NULL DEFAULT 'user',
     plan TEXT,
     paid_until DATE,
+    blocked BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS usage_counters (
@@ -104,6 +105,7 @@ def init_db() -> None:
     if not db_enabled():
         return
     _execute(SCHEMA)
+    _execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked BOOLEAN NOT NULL DEFAULT false")
     _ensure_admin()
 
 
@@ -129,16 +131,17 @@ def _ensure_admin() -> None:
 
 def fetch_users() -> list[dict[str, Any]]:
     rows = _execute(
-        "SELECT login, password_hash, role, plan, paid_until FROM users ORDER BY created_at",
+        "SELECT login, password_hash, role, plan, paid_until, blocked FROM users ORDER BY created_at",
         fetch="all",
     ) or []
     users: list[dict[str, Any]] = []
-    for login, password_hash, role, plan, paid_until in rows:
+    for login, password_hash, role, plan, paid_until, blocked in rows:
         user: dict[str, Any] = {"login": login, "password_hash": password_hash, "role": role}
         if plan:
             user["plan"] = plan
         if paid_until:
             user["paid_until"] = paid_until.isoformat() if isinstance(paid_until, date) else str(paid_until)
+        user["blocked"] = bool(blocked)
         users.append(user)
     return users
 
@@ -156,6 +159,34 @@ def set_plan(login: str, plan: str, paid_until: str) -> bool:
         """UPDATE users SET plan = %s, paid_until = %s WHERE lower(login) = lower(%s)
            RETURNING login""",
         (plan, paid_until, login.strip()),
+        fetch="one",
+    )
+    return row is not None
+
+
+def set_blocked(login: str, blocked: bool) -> bool:
+    row = _execute(
+        "UPDATE users SET blocked = %s WHERE lower(login) = lower(%s) RETURNING login",
+        (bool(blocked), login.strip()),
+        fetch="one",
+    )
+    return row is not None
+
+
+def get_user_blocked(login: str) -> bool:
+    row = _execute(
+        "SELECT blocked FROM users WHERE lower(login) = lower(%s)",
+        (login.strip(),),
+        fetch="one",
+    )
+    return bool(row[0]) if row else False
+
+
+def delete_user_db(login: str) -> bool:
+    _execute("DELETE FROM usage_counters WHERE lower(login) = lower(%s)", (login.strip(),))
+    row = _execute(
+        "DELETE FROM users WHERE lower(login) = lower(%s) RETURNING login",
+        (login.strip(),),
         fetch="one",
     )
     return row is not None

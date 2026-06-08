@@ -34,6 +34,10 @@ def get_current_user(authorization: str | None = Header(default=None)) -> dict[s
     user = verify_access_token(token)
     if user is None:
         raise HTTPException(status_code=401, detail="Сессия недействительна или истекла. Войдите снова.")
+    from backend.auth import is_user_blocked
+
+    if is_user_blocked(user["login"]):
+        raise HTTPException(status_code=403, detail="Аккаунт заблокирован.")
     return user
 
 
@@ -247,6 +251,30 @@ def api_admin_create_user(body: dict, current_user: dict[str, str] = Depends(get
             plan=str(plan) if plan else None,
             months=int(body.get("months") or 1),
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/admin/users/{login}/block")
+def api_admin_block_user(login: str, body: dict, current_user: dict[str, str] = Depends(get_current_user)) -> dict:
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Требуется роль admin.")
+    from backend.services.user_admin import set_blocked
+
+    try:
+        return set_blocked(login, bool(body.get("blocked")))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/admin/users/{login}")
+def api_admin_delete_user(login: str, current_user: dict[str, str] = Depends(get_current_user)) -> dict:
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Требуется роль admin.")
+    from backend.services.user_admin import delete_user
+
+    try:
+        return delete_user(login)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

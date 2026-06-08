@@ -96,6 +96,19 @@ export async function createUser(payload: {
   });
 }
 
+export async function setUserBlocked(login: string, blocked: boolean): Promise<{ login: string; blocked: boolean }> {
+  return request(`/admin/users/${encodeURIComponent(login)}/block`, {
+    method: "POST",
+    body: JSON.stringify({ blocked })
+  });
+}
+
+export async function deleteUser(login: string): Promise<{ login: string; deleted: boolean }> {
+  return request(`/admin/users/${encodeURIComponent(login)}`, {
+    method: "DELETE"
+  });
+}
+
 export async function getAiStatus(): Promise<AiStatus> {
   return request<AiStatus>("/ai/status");
 }

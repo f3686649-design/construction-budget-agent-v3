@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { createUser, listUsers } from "../api/client";
+import { createUser, deleteUser, listUsers, setUserBlocked } from "../api/client";
 import type { AdminUser } from "../types";
 
 const PLAN_OPTIONS = [
@@ -11,11 +11,14 @@ const PLAN_OPTIONS = [
 
 const cell: React.CSSProperties = { padding: "8px 10px", borderBottom: "1px solid #eef2f9" };
 const head: React.CSSProperties = { textAlign: "left", padding: "8px 10px", borderBottom: "1px solid #e2e8f4", color: "#5b6b88", fontWeight: 600 };
+const actionBtn: React.CSSProperties = { border: "1px solid #d4ddee", background: "#fff", borderRadius: 8, padding: "5px 10px", fontSize: 13, cursor: "pointer", marginRight: 6 };
 
 export function UsersAdminPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
 
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
@@ -60,6 +63,35 @@ export function UsersAdminPage() {
       setFormError(error instanceof Error ? error.message : "Не удалось создать пользователя.");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const toggleBlock = async (u: AdminUser) => {
+    setActionError(null);
+    setBusy(u.login);
+    try {
+      await setUserBlocked(u.login, !u.blocked);
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Не удалось изменить статус.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const removeUser = async (u: AdminUser) => {
+    if (!window.confirm(`Удалить пользователя «${u.login}»? Действие необратимо.`)) {
+      return;
+    }
+    setActionError(null);
+    setBusy(u.login);
+    try {
+      await deleteUser(u.login);
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Не удалось удалить пользователя.");
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -119,6 +151,7 @@ export function UsersAdminPage() {
         <h2 style={{ marginTop: 0 }}>Пользователи</h2>
         {loading ? <p className="muted">Загрузка...</p> : null}
         {listError ? <div className="error-banner">{listError}</div> : null}
+        {actionError ? <div className="error-banner">{actionError}</div> : null}
         {!loading && !listError ? (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -128,7 +161,8 @@ export function UsersAdminPage() {
                   <th style={head}>Роль</th>
                   <th style={head}>Тариф</th>
                   <th style={head}>Оплачен до</th>
-                  <th style={head}>Активен</th>
+                  <th style={head}>Статус</th>
+                  <th style={head}>Действия</th>
                 </tr>
               </thead>
               <tbody>
@@ -138,12 +172,33 @@ export function UsersAdminPage() {
                     <td style={cell}>{u.role}</td>
                     <td style={cell}>{u.plan_name || u.plan || "—"}</td>
                     <td style={cell}>{u.paid_until || "—"}</td>
-                    <td style={cell}>{u.active ? "да" : "нет"}</td>
+                    <td style={cell}>
+                      {u.blocked ? <span style={{ color: "#c0392b", fontWeight: 600 }}>Заблокирован</span> : "Активен"}
+                    </td>
+                    <td style={cell}>
+                      {u.role === "admin" ? (
+                        <span className="muted">—</span>
+                      ) : (
+                        <>
+                          <button style={actionBtn} type="button" disabled={busy === u.login} onClick={() => toggleBlock(u)}>
+                            {u.blocked ? "Разблокировать" : "Заблокировать"}
+                          </button>
+                          <button
+                            style={{ ...actionBtn, color: "#c0392b", borderColor: "#f0c2bc" }}
+                            type="button"
+                            disabled={busy === u.login}
+                            onClick={() => removeUser(u)}
+                          >
+                            Удалить
+                          </button>
+                        </>
+                      )}
+                    </td>
                   </tr>
                 ))}
                 {users.length === 0 ? (
                   <tr>
-                    <td colSpan={5} style={{ padding: "10px", color: "#5b6b88" }}>
+                    <td colSpan={6} style={{ padding: "10px", color: "#5b6b88" }}>
                       Пока нет пользователей.
                     </td>
                   </tr>

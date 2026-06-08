@@ -74,6 +74,8 @@ def authenticate_user(login: str, password: str, users_file: Path | None = None)
         stored_login = str(user.get("login") or "").strip().lower()
         if stored_login != normalized_login:
             continue
+        if user.get("blocked"):
+            return None
         password_hash = str(user.get("password_hash") or "")
         if verify_password(password, password_hash):
             return {
@@ -130,3 +132,16 @@ def _base64url_encode(value: bytes) -> str:
 def _base64url_decode(value: str) -> bytes:
     padding = "=" * (-len(value) % 4)
     return base64.urlsafe_b64decode((value + padding).encode("ascii"))
+
+
+def is_user_blocked(login: str) -> bool:
+    """Заблокирован ли пользователь (вход и доступ запрещены)."""
+    from backend.services.db import db_enabled, get_user_blocked
+
+    if db_enabled():
+        return bool(get_user_blocked(login))
+    normalized = login.strip().lower()
+    for user in load_users():
+        if str(user.get("login") or "").strip().lower() == normalized:
+            return bool(user.get("blocked"))
+    return False

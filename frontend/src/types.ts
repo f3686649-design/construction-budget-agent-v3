@@ -310,4 +310,5 @@ export interface AdminUser {
   plan_name?: string;
   paid_until?: string | null;
   active?: boolean;
+  blocked?: boolean;
 }

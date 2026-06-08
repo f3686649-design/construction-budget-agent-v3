@@ -70,3 +70,42 @@ def test_invalid_role_rejected(users_file: Path) -> None:
 def test_empty_login_rejected(users_file: Path) -> None:
     with pytest.raises(ValueError):
         user_admin.create_user("   ", "secret123")
+
+
+def test_block_prevents_login_and_unblock_restores(users_file: Path) -> None:
+    user_admin.create_user("ivan", "secret123")
+    assert authenticate_user("ivan", "secret123", users_file) is not None
+    user_admin.set_blocked("ivan", True)
+    assert authenticate_user("ivan", "secret123", users_file) is None
+    assert auth.is_user_blocked("ivan") is True
+    user_admin.set_blocked("ivan", False)
+    assert authenticate_user("ivan", "secret123", users_file) is not None
+    assert auth.is_user_blocked("ivan") is False
+
+
+def test_blocked_flag_in_list(users_file: Path) -> None:
+    user_admin.create_user("ivan", "secret123")
+    user_admin.set_blocked("ivan", True)
+    listed = {u["login"]: u for u in user_admin.list_all_users()}
+    assert listed["ivan"]["blocked"] is True
+
+
+def test_delete_user_removes_account(users_file: Path) -> None:
+    user_admin.create_user("ivan", "secret123")
+    user_admin.delete_user("ivan")
+    assert authenticate_user("ivan", "secret123", users_file) is None
+    assert "ivan" not in {u["login"] for u in user_admin.list_all_users()}
+
+
+def test_cannot_block_or_delete_admin(users_file: Path) -> None:
+    with pytest.raises(ValueError):
+        user_admin.set_blocked("admin", True)
+    with pytest.raises(ValueError):
+        user_admin.delete_user("admin")
+
+
+def test_block_delete_unknown_user_rejected(users_file: Path) -> None:
+    with pytest.raises(ValueError):
+        user_admin.set_blocked("ghost", True)
+    with pytest.raises(ValueError):
+        user_admin.delete_user("ghost")
