@@ -93,6 +93,10 @@ def api_register(credentials: RegisterRequest, request: Request) -> dict:
         try:
             email_service.send_verification_email(email, create_email_token(credentials.login))
         except Exception as exc:  # noqa: BLE001
+            import traceback
+
+            print("SMTP_DEBUG:", type(exc).__name__, repr(exc), flush=True)
+            traceback.print_exc()
             from backend.services.user_admin import delete_user
 
             try:
