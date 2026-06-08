@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from backend.api.schemas import AiChatRequest, AuthUser, GenerateModelResponse, HealthResponse, LoginRequest, LoginResponse, ProjectHistoryItem, ProjectRequest
+from backend.api.schemas import AiChatRequest, AuthUser, GenerateModelResponse, HealthResponse, LoginRequest, LoginResponse, ProjectHistoryItem, ProjectRequest, RegisterRequest
 from backend.auth import authenticate_user, create_access_token, verify_access_token
 from backend.api.rate_limit import check_rate_limit
 from backend.services.billing_service import billing_overview, check_quota, record_usage, set_user_plan
@@ -46,14 +46,19 @@ def api_login(credentials: LoginRequest) -> LoginResponse:
     user = authenticate_user(credentials.login, credentials.password)
     if user is None:
         raise HTTPException(status_code=401, detail="Неверный логин или пароль.")
+    from backend.services import email_service
+    from backend.auth import is_email_verified
+
+    if email_service.email_enabled() and not is_email_verified(user["login"]):
+        raise HTTPException(status_code=403, detail="Подтвердите email по ссылке из письма, затем войдите. Если письма нет — запросите отправку повторно.")
     return LoginResponse(
         access_token=create_access_token(user),
         user=AuthUser(**user),
     )
 
 
-@router.post("/auth/register", response_model=LoginResponse)
-def api_register(credentials: LoginRequest, request: Request) -> LoginResponse:
+@router.post("/auth/register")
+def api_register(credentials: RegisterRequest, request: Request) -> dict:
     import os
 
     if os.getenv("ALLOW_SELF_REGISTRATION", "true").strip().lower() not in {"1", "true", "yes", "on"}:
@@ -63,16 +68,90 @@ def api_register(credentials: LoginRequest, request: Request) -> LoginResponse:
     allowed, _remaining = check_rate_limit(f"register:{client_ip}", "register")
     if not allowed:
         raise HTTPException(status_code=429, detail="Слишком много регистраций с вашего адреса. Попробуйте позже.")
+
+    from backend.services import email_service
     from backend.services.user_admin import create_user
+    from backend.auth import create_email_token
+
+    verify = email_service.email_enabled()
+    email = (credentials.email or "").strip()
+    if verify and "@" not in email:
+        raise HTTPException(status_code=400, detail="Укажите корректный email — на него придёт письмо подтверждения.")
 
     try:
-        create_user(login=credentials.login, password=credentials.password, role="user")
+        create_user(
+            login=credentials.login,
+            password=credentials.password,
+            role="user",
+            email=email or None,
+            email_verified=not verify,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if verify:
+        try:
+            email_service.send_verification_email(email, create_email_token(credentials.login))
+        except Exception as exc:  # noqa: BLE001
+            from backend.services.user_admin import delete_user
+
+            try:
+                delete_user(credentials.login)
+            except Exception:  # noqa: BLE001
+                pass
+            raise HTTPException(status_code=502, detail="Не удалось отправить письмо подтверждения. Попробуйте позже.") from exc
+        return {"status": "verification_sent", "email": email}
+
     user = authenticate_user(credentials.login, credentials.password)
     if user is None:
         raise HTTPException(status_code=500, detail="Не удалось войти после регистрации.")
-    return LoginResponse(access_token=create_access_token(user), user=AuthUser(**user))
+    return {"status": "verified", "access_token": create_access_token(user), "token_type": "bearer", "user": user}
+
+
+@router.get("/auth/verify")
+def api_verify_email(token: str):
+    import os
+
+    from fastapi.responses import RedirectResponse
+
+    from backend.auth import verify_email_token
+
+    base = os.getenv("APP_BASE_URL", "https://construction-budget-agent-v3.onrender.com").rstrip("/")
+    login = verify_email_token(token)
+    if login is None:
+        return RedirectResponse(url=f"{base}/?verify=invalid", status_code=303)
+    from backend.services.user_admin import mark_email_verified
+
+    mark_email_verified(login)
+    return RedirectResponse(url=f"{base}/?verified=1", status_code=303)
+
+
+@router.post("/auth/resend-verification")
+def api_resend_verification(body: dict, request: Request) -> dict:
+    from backend.services import email_service
+
+    if not email_service.email_enabled():
+        raise HTTPException(status_code=400, detail="Подтверждение email сейчас не используется.")
+    forwarded = request.headers.get("x-forwarded-for")
+    client_ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
+    allowed, _remaining = check_rate_limit(f"resend:{client_ip}", "register")
+    if not allowed:
+        raise HTTPException(status_code=429, detail="Слишком часто. Попробуйте позже.")
+
+    from backend.auth import create_email_token, load_users
+
+    login = str(body.get("login") or "").strip().lower()
+    target = None
+    for user in load_users():
+        if str(user.get("login") or "").strip().lower() == login:
+            target = user
+            break
+    if target and not bool(target.get("email_verified", True)) and target.get("email"):
+        try:
+            email_service.send_verification_email(str(target["email"]), create_email_token(str(target["login"])))
+        except Exception:  # noqa: BLE001
+            pass
+    return {"status": "ok"}
 
 
 @router.get("/auth/me", response_model=AuthUser)

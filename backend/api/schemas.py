@@ -22,6 +22,12 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RegisterRequest(BaseModel):
+    login: str
+    email: str = ""
+    password: str
+
+
 class AuthUser(BaseModel):
     login: str
     role: str

@@ -72,6 +72,8 @@ CREATE TABLE IF NOT EXISTS users (
     plan TEXT,
     paid_until DATE,
     blocked BOOLEAN NOT NULL DEFAULT false,
+    email TEXT,
+    email_verified BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS usage_counters (
@@ -106,6 +108,8 @@ def init_db() -> None:
         return
     _execute(SCHEMA)
     _execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked BOOLEAN NOT NULL DEFAULT false")
+    _execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT")
+    _execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT true")
     _ensure_admin()
 
 
@@ -131,17 +135,20 @@ def _ensure_admin() -> None:
 
 def fetch_users() -> list[dict[str, Any]]:
     rows = _execute(
-        "SELECT login, password_hash, role, plan, paid_until, blocked FROM users ORDER BY created_at",
+        "SELECT login, password_hash, role, plan, paid_until, blocked, email, email_verified FROM users ORDER BY created_at",
         fetch="all",
     ) or []
     users: list[dict[str, Any]] = []
-    for login, password_hash, role, plan, paid_until, blocked in rows:
+    for login, password_hash, role, plan, paid_until, blocked, email, email_verified in rows:
         user: dict[str, Any] = {"login": login, "password_hash": password_hash, "role": role}
         if plan:
             user["plan"] = plan
         if paid_until:
             user["paid_until"] = paid_until.isoformat() if isinstance(paid_until, date) else str(paid_until)
         user["blocked"] = bool(blocked)
+        if email:
+            user["email"] = email
+        user["email_verified"] = bool(email_verified)
         users.append(user)
     return users
 
@@ -187,6 +194,24 @@ def delete_user_db(login: str) -> bool:
     row = _execute(
         "DELETE FROM users WHERE lower(login) = lower(%s) RETURNING login",
         (login.strip(),),
+        fetch="one",
+    )
+    return row is not None
+
+
+def set_email(login: str, email: str | None, email_verified: bool) -> bool:
+    row = _execute(
+        "UPDATE users SET email = %s, email_verified = %s WHERE lower(login) = lower(%s) RETURNING login",
+        (email, bool(email_verified), login.strip()),
+        fetch="one",
+    )
+    return row is not None
+
+
+def set_email_verified(login: str, verified: bool) -> bool:
+    row = _execute(
+        "UPDATE users SET email_verified = %s WHERE lower(login) = lower(%s) RETURNING login",
+        (bool(verified), login.strip()),
         fetch="one",
     )
     return row is not None

@@ -68,3 +68,56 @@ def test_register_rate_limited(client: TestClient, monkeypatch: pytest.MonkeyPat
     assert client.post("/api/auth/register", json={"login": "b", "password": "secret123"}).status_code == 200
     # Третья регистрация с того же IP — блок.
     assert client.post("/api/auth/register", json={"login": "c", "password": "secret123"}).status_code == 429
+
+
+def test_email_verification_full_flow(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend import auth
+    from backend.services import email_service
+
+    sent: dict = {}
+    monkeypatch.setattr(email_service, "email_enabled", lambda: True)
+    monkeypatch.setattr(email_service, "send_verification_email", lambda to, token: sent.update(to=to))
+
+    r = client.post("/api/auth/register", json={"login": "newbie", "email": "a@b.ru", "password": "secret123"})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "verification_sent"
+    assert sent.get("to") == "a@b.ru"
+
+    # Вход заблокирован до подтверждения.
+    r2 = client.post("/api/auth/login", json={"login": "newbie", "password": "secret123"})
+    assert r2.status_code == 403
+
+    token = auth.create_email_token("newbie")
+    v = client.get(f"/api/auth/verify?token={token}", follow_redirects=False)
+    assert v.status_code == 303
+    assert "verified=1" in v.headers["location"]
+
+    r3 = client.post("/api/auth/login", json={"login": "newbie", "password": "secret123"})
+    assert r3.status_code == 200
+
+
+def test_register_rejects_bad_email_when_verification_on(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.services import email_service
+
+    monkeypatch.setattr(email_service, "email_enabled", lambda: True)
+    monkeypatch.setattr(email_service, "send_verification_email", lambda to, token: None)
+    r = client.post("/api/auth/register", json={"login": "x", "email": "not-an-email", "password": "secret123"})
+    assert r.status_code == 400
+
+
+def test_verify_invalid_token_redirects(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    v = client.get("/api/auth/verify?token=garbage", follow_redirects=False)
+    assert v.status_code == 303
+    assert "verify=invalid" in v.headers["location"]
+
+
+def test_resend_verification(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from backend.services import email_service
+
+    calls: list = []
+    monkeypatch.setattr(email_service, "email_enabled", lambda: True)
+    monkeypatch.setattr(email_service, "send_verification_email", lambda to, token: calls.append(to))
+    client.post("/api/auth/register", json={"login": "newbie", "email": "a@b.ru", "password": "secret123"})
+    r = client.post("/api/auth/resend-verification", json={"login": "newbie"})
+    assert r.status_code == 200 and r.json()["status"] == "ok"
+    assert calls

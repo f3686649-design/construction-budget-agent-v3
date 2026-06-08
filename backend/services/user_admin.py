@@ -47,6 +47,8 @@ def create_user(
     role: str = "user",
     plan: str | None = None,
     months: int = 1,
+    email: str | None = None,
+    email_verified: bool = True,
 ) -> dict[str, Any]:
     """Создаёт клиентский аккаунт (Postgres или файл) и опционально включает тариф."""
     login = (login or "").strip()
@@ -63,7 +65,10 @@ def create_user(
     from backend.services.db import db_enabled, upsert_user
 
     if db_enabled():
+        from backend.services.db import set_email
+
         upsert_user(login, hash_password(password), normalized_role)
+        set_email(login, email or None, email_verified)
     else:
         users_file = auth.USERS_FILE
         if users_file.exists():
@@ -73,7 +78,11 @@ def create_user(
         else:
             payload = {"users": []}
         payload.setdefault("users", [])
-        payload["users"].append(create_user_record(login, password, normalized_role))
+        record = create_user_record(login, password, normalized_role)
+        if email:
+            record["email"] = email
+        record["email_verified"] = bool(email_verified)
+        payload["users"].append(record)
         users_file.parent.mkdir(parents=True, exist_ok=True)
         users_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -143,3 +152,19 @@ def delete_user(login: str) -> dict[str, Any]:
         ]
         users_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"login": real_login, "deleted": True}
+
+
+def mark_email_verified(login: str) -> None:
+    from backend.services.db import db_enabled, set_email_verified
+
+    if db_enabled():
+        set_email_verified(login, True)
+        return
+    users_file = auth.USERS_FILE
+    if not users_file.exists():
+        return
+    payload = json.loads(users_file.read_text(encoding="utf-8"))
+    for u in payload.get("users", []):
+        if str(u.get("login") or "").strip().lower() == login.strip().lower():
+            u["email_verified"] = True
+    users_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

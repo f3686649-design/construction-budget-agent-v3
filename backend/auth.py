@@ -145,3 +145,45 @@ def is_user_blocked(login: str) -> bool:
         if str(user.get("login") or "").strip().lower() == normalized:
             return bool(user.get("blocked"))
     return False
+
+
+EMAIL_TOKEN_TTL_SECONDS = 24 * 3600
+
+
+def create_email_token(login: str, ttl_seconds: int = EMAIL_TOKEN_TTL_SECONDS) -> str:
+    payload = {"login": login, "purpose": "verify_email", "exp": int(time.time()) + ttl_seconds}
+    payload_bytes = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    signature = hmac.new(AUTH_SECRET.encode("utf-8"), payload_bytes, hashlib.sha256).digest()
+    return f"{_base64url_encode(payload_bytes)}.{_base64url_encode(signature)}"
+
+
+def verify_email_token(token: str) -> str | None:
+    try:
+        payload_raw, signature_raw = token.split(".", 1)
+        payload_bytes = _base64url_decode(payload_raw)
+        signature = _base64url_decode(signature_raw)
+    except (ValueError, TypeError):
+        return None
+    expected = hmac.new(AUTH_SECRET.encode("utf-8"), payload_bytes, hashlib.sha256).digest()
+    if not hmac.compare_digest(signature, expected):
+        return None
+    try:
+        payload = json.loads(payload_bytes.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if payload.get("purpose") != "verify_email":
+        return None
+    if int(payload.get("exp") or 0) < int(time.time()):
+        return None
+    login = str(payload.get("login") or "").strip()
+    return login or None
+
+
+def is_email_verified(login: str) -> bool:
+    """True, если email подтверждён или подтверждение не требуется (старые аккаунты)."""
+    normalized = login.strip().lower()
+    for user in load_users():
+        if str(user.get("login") or "").strip().lower() == normalized:
+            return bool(user.get("email_verified", True))
+    return True
+

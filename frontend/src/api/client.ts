@@ -40,13 +40,32 @@ export async function login(loginValue: string, password: string): Promise<AuthS
   return session;
 }
 
-export async function register(loginValue: string, password: string): Promise<AuthSession> {
-  const session = await request<AuthSession>("/auth/register", {
+export type RegisterResult =
+  | { status: "verified"; session: AuthSession }
+  | { status: "verification_sent"; email: string };
+
+export async function register(loginValue: string, email: string, password: string): Promise<RegisterResult> {
+  const data = await request<{ status?: string; email?: string; access_token?: string; token_type?: string; user?: AuthUser }>("/auth/register", {
     method: "POST",
-    body: JSON.stringify({ login: loginValue, password })
+    body: JSON.stringify({ login: loginValue, email, password })
   });
+  if (data.status === "verification_sent") {
+    return { status: "verification_sent", email: data.email ?? email };
+  }
+  const session: AuthSession = {
+    access_token: data.access_token ?? "",
+    token_type: data.token_type ?? "bearer",
+    user: data.user ?? { login: loginValue, role: "user" }
+  };
   saveAuthSession(session);
-  return session;
+  return { status: "verified", session };
+}
+
+export async function resendVerification(login: string): Promise<void> {
+  await request("/auth/resend-verification", {
+    method: "POST",
+    body: JSON.stringify({ login })
+  });
 }
 
 export async function getMe(): Promise<AuthUser> {

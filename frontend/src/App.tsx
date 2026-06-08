@@ -61,14 +61,23 @@ function App() {
     }
   };
 
-  const handleRegister = async (loginValue: string, password: string) => {
+  const handleRegister = async (
+    loginValue: string,
+    email: string,
+    password: string
+  ): Promise<{ pending: boolean; email?: string }> => {
     setAuthLoading(true);
     setAuthError(null);
     try {
-      const session = await register(loginValue, password);
-      setAuth(session);
+      const result = await register(loginValue, email, password);
+      if (result.status === "verified") {
+        setAuth(result.session);
+        return { pending: false };
+      }
+      return { pending: true, email: result.email };
     } catch (requestError) {
       setAuthError(requestError instanceof Error ? requestError.message : "Не удалось зарегистрироваться.");
+      return { pending: false };
     } finally {
       setAuthLoading(false);
     }
