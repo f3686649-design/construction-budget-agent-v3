@@ -344,7 +344,7 @@ def test_api_download_returns_excel_file() -> None:
         from backend.services import billing_service
 
         billing_service.set_user_plan("ivan", "start", 1)
-        generated = api_request("POST", "/api/generate-model", {"project_name": "Download API project"}, headers)
+        generated = api_request("POST", "/api/generate-model", {"project_name": "Проект Скачивание Тест"}, headers)
         assert generated.status_code == 200
         payload = generated.json()
         project_id = payload["project_id"]

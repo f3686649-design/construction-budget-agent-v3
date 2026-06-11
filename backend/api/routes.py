@@ -372,8 +372,12 @@ def api_download(filename: str, current_user: dict[str, str] = Depends(get_curre
     content = get_excel_bytes(filename)
     if content is None:
         raise HTTPException(status_code=404, detail="Excel-файл не найден.")
+    from urllib.parse import quote
+
+    ascii_fallback = filename.encode("ascii", "ignore").decode().strip() or "model.xlsx"
+    disposition = f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": disposition},
     )
